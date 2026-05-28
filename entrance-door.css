@@ -1,0 +1,345 @@
+/* ──────────────────────────────────────────────────────────────
+   ENTRANCE DOOR — Gerçek portal sahnesi
+   
+   Z-stack:
+     0  Showroom    : her zaman arkada, opacity sabit
+     1  Zoom layer  : hero görseli + canvas (zoom + fade ile kaybolur)
+     5  Hero copy   : editorial overlay
+   
+   Portal mantığı: canvas'taki kapı görselinin siyah arkası
+   pixel-level olarak şeffaf yapılıyor (JS tarafında).
+   Bu sayede arkadaki showroom doğal olarak kapı boşluğundan görünür.
+   ────────────────────────────────────────────────────────────── */
+
+.entrance-door {
+  --hero-copy-opacity: 1;
+  --hero-copy-y: 0px;
+  --hero-cue-opacity: 1;
+  --zoom-scale: 1;
+  --zoom-fade: 1;
+  --zoom-origin-x: 50%;
+  --zoom-origin-y: 52%;
+  --showroom-scale: 0.14;
+  --showroom-align-x: 0px;
+  --showroom-align-y: 0px;
+  --showroom-content-opacity: 0.12;
+  --showroom-ui-opacity: 0;
+  --showroom-ui-x: 76px;
+  --showroom-backdrop-opacity: 0;
+  --showroom-orbit-depth: 0;
+  --showroom-text-clip: 100%;
+  --showroom-text-x: -52px;
+  --showroom-door-rise-y: 86px;
+  --showroom-neighbor-rise-y: 82px;
+  --showroom-page-x: 0%;
+
+  position: relative;
+  width: 100%;
+  height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+  background: #050505;
+  color: #f7f7f2;
+  font-family: var(--font-body);
+}
+
+.app-shell--day .entrance-door {
+  background: #ece9e1;
+  color: #071018;
+}
+
+/* Subtle edge vignette (zoom layer ile fade out olur) */
+.entrance-door::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.32) 0%,
+    transparent 22%,
+    transparent 72%,
+    rgba(0, 0, 0, 0.46) 100%
+  );
+  opacity: var(--zoom-fade);
+  transition: opacity 360ms var(--ease-soft);
+}
+
+.app-shell--day .entrance-door::after {
+  background: linear-gradient(
+    180deg,
+    rgba(7, 16, 24, 0.12) 0%,
+    transparent 28%,
+    transparent 72%,
+    rgba(7, 16, 24, 0.24) 100%
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   SHOWROOM LAYER — her zaman arkada (z:0)
+   ────────────────────────────────────────────────────────────── */
+
+.entrance-door__showroom {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  transform: translate3d(var(--showroom-page-x), 0, 0);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.entrance-door__next-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  transform: translate3d(calc(100% + var(--showroom-page-x)), 0, 0);
+  background:
+    radial-gradient(
+      ellipse 70% 60% at -72% 58%,
+      #f4f1e9 0%,
+      #ece9e1 60%
+    );
+  pointer-events: none;
+  overflow: hidden;
+  will-change: transform;
+}
+
+.entrance-door__next-panel::before,
+.entrance-door__next-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.entrance-door__next-panel::before {
+  background: radial-gradient(
+    ellipse 60% 80% at -70% 50%,
+    transparent 0%,
+    transparent 50%,
+    rgba(7, 16, 24, 0.10) 100%
+  );
+}
+
+.entrance-door__next-panel::after {
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 180px 180px;
+}
+
+.entrance-door__showroom .showroom-turntable__stage {
+  transform-origin: var(--zoom-origin-x) var(--zoom-origin-y);
+  transform: translate3d(var(--showroom-align-x), var(--showroom-align-y), 0) scale(var(--showroom-scale));
+  opacity: var(--showroom-content-opacity);
+  will-change: transform, opacity;
+}
+
+.entrance-door__showroom .showroom-turntable__info {
+  transform-origin: var(--zoom-origin-x) var(--zoom-origin-y);
+  transform: translate3d(var(--showroom-align-x), var(--showroom-align-y), 0) scale(var(--showroom-scale)) translate3d(var(--showroom-ui-x), 0, 0);
+  opacity: var(--showroom-ui-opacity);
+  will-change: transform, opacity;
+}
+
+/* Showroom active olduğunda click'leri yakala */
+.entrance-door--showroom-active .entrance-door__showroom {
+  pointer-events: auto;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   ZOOM LAYER — hero görseli + canvas (z:1)
+   ────────────────────────────────────────────────────────────── */
+
+.entrance-door__zoom-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  transform-origin: var(--zoom-origin-x) var(--zoom-origin-y);
+  transform: scale(var(--zoom-scale));
+  opacity: var(--zoom-fade);
+  will-change: transform, opacity;
+}
+
+.entrance-door__hero-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  user-select: none;
+  pointer-events: none;
+}
+
+.entrance-door__hero-image--day {
+  opacity: 1;
+  transition: opacity 720ms var(--ease-soft);
+}
+
+.entrance-door__hero-image--night {
+  opacity: 0;
+  transition: opacity 720ms var(--ease-soft);
+}
+
+.app-shell--night .entrance-door__hero-image--day {
+  opacity: 0;
+}
+
+.app-shell--night .entrance-door__hero-image--night {
+  opacity: 1;
+}
+
+/* CANVAS STAGE — kapının yerleşeceği konum */
+.entrance-door__stage {
+  position: absolute;
+  left: var(--door-left, 50%);
+  top: var(--door-top, 50%);
+  width: var(--door-width, 200px);
+  height: var(--door-height, 440px);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.entrance-door__canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   HERO COPY
+   ────────────────────────────────────────────────────────────── */
+
+.entrance-door__copy {
+  position: absolute;
+  left: 89px;
+  top: 310px;
+  z-index: 5;
+  width: 620.78px;
+  max-width: 620.78px;
+  opacity: var(--hero-copy-opacity);
+  transform: translateY(var(--hero-copy-y));
+  pointer-events: none;
+  will-change: opacity, transform;
+  text-align: left;
+}
+
+.entrance-door__heading {
+  font-family: "PP Neue Montreal", var(--font-display);
+  font-size: 94px;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.94);
+  margin: 0;
+  text-align: left;
+  text-shadow: none;
+}
+
+.app-shell--day .entrance-door__heading {
+  text-shadow: none;
+}
+
+.entrance-door__heading > span {
+  display: block;
+}
+
+.entrance-door__heading > span + span {
+  margin-top: 0;
+}
+
+.entrance-door__heading em {
+  font-family: inherit;
+  font-weight: inherit;
+  font-style: normal;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+.entrance-door__subtitle {
+  width: 357px;
+  margin: 26px 0 0;
+  font-family: "General Sans", var(--font-body);
+  font-size: 26px;
+  line-height: 34px;
+  letter-spacing: -0.01em;
+  font-weight: 400;
+  color: rgba(39, 33, 29, 0.9);
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   SCROLL CUE
+   ────────────────────────────────────────────────────────────── */
+
+.entrance-door__cue {
+  position: absolute;
+  right: clamp(28px, 5vw, 84px);
+  bottom: clamp(64px, 8vh, 104px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 14px;
+  opacity: var(--hero-cue-opacity);
+  pointer-events: none;
+}
+
+.entrance-door__cue span {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: currentColor;
+  opacity: 0.72;
+}
+
+.entrance-door__cue i {
+  width: 1px;
+  height: 56px;
+  background: currentColor;
+  opacity: 0.42;
+  transform-origin: top;
+  animation: entrance-cue-pulse 2.6s infinite var(--ease-soft);
+}
+
+@keyframes entrance-cue-pulse {
+  0%, 100% { transform: scaleY(0.28); opacity: 0.18; }
+  50% { transform: scaleY(1); opacity: 0.62; }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   RESPONSIVE
+   ────────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .entrance-door__heading {
+    font-size: clamp(44px, 11vw, 68px);
+  }
+
+  .entrance-door__copy {
+    left: 24px;
+    top: auto;
+    bottom: 64px;
+  }
+
+  .entrance-door__cue {
+    right: 24px;
+    bottom: 64px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entrance-door__cue i {
+    animation: none;
+  }
+
+  .entrance-door__hero-image,
+  .entrance-door__zoom-layer {
+    transition: none !important;
+  }
+}

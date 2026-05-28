@@ -1,0 +1,903 @@
+<script setup lang="ts">
+/**
+ * EntranceDoor — Gerçek portal sahnesi
+ *
+ * Yaklaşım:
+ *  • Showroom HER ZAMAN arkada (z:0), opacity sabit.
+ *  • Hero görseli + kapı frame'i ÜSTTE (z:1).
+ *  • Her frame yüklenirken siyah pixel'leri alpha=0'a çeviriyoruz.
+ *    Böylece kapı açılan kısımdan altındaki showroom doğal olarak görünüyor.
+ *    Bu GERÇEK portal — yani kapı bir mask gibi davranıyor.
+ *
+ * Timeline (master progress):
+ *  0.00 → 0.50  PORTAL    : sadece kapı açılıyor, zoom YOK
+ *  0.50 → 0.62  HOLD      : kapı tam açık, kısa duraklama
+ *  0.62 → 0.82  ZOOM      : kapı boşluğuna doğru yakınlaşma
+ *  0.82 → 1.00  TURNTABLE : showroom çarkı döner
+ */
+
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useKardoorLocale } from "~/composables/useKardoorLocale";
+import ShowroomTurntable from "./ShowroomTurntable.vue";
+
+// ─────────────────────────────────────────────────────────────
+// IMAGEKIT
+// ─────────────────────────────────────────────────────────────
+const IK_BASE = "https://ik.imagekit.io/kardoor";
+const FRAME_COUNT = 120;
+
+const heroAssets = {
+  day: `${IK_BASE}/EvLight.png?tr=f-webp,q-82`,
+  night: `${IK_BASE}/EvDark.png?tr=f-webp,q-82`
+};
+
+const frameUrl = (n: number, width?: number) => {
+  const transform = width ? `tr=w-${width},f-webp,q-78` : "tr=f-webp,q-80";
+  return `${IK_BASE}/lastdoorrender/Image${String(n).padStart(2, "0")}.webp?${transform}`;
+};
+
+const HERO_NATURAL = { width: 1672, height: 941 };
+const HERO_DOOR_RECT = { x: 676, y: 233, width: 332, height: 408 };
+const RENDER_DOOR_CROP_FULL = { x: 1051, y: 421, width: 474, height: 580 };
+const RENDER_DOOR_CROP_FALLBACK = { x: 1051, y: 421, width: 474, height: 580 };
+
+// Portal mask: siyaha yakın pixel'leri şeffaf yapma eşiği
+// 0 = sadece tam siyah, 30-40 = koyu griler dahil
+const PORTAL_BLACK_THRESHOLD = 8;
+const PORTAL_FEATHER = 10; // yumuşak geçiş bandı
+
+// ─────────────────────────────────────────────────────────────
+// COPY (TR / EN)
+// ─────────────────────────────────────────────────────────────
+const { locale } = useKardoorLocale();
+
+const copy = computed(() =>
+  locale.value === "tr"
+    ? {
+        sectionLabel: "Kardoor giriş ve showroom",
+        imageAlt: "Modern villa girişi — Kardoor çelik kapı",
+        line1: "Hayallerinize",
+        accent: "Açılan",
+        line2: "Kapı",
+        subtitle: "Güven, kapının ardında yaşar.",
+        scrollCue: "Kaydır"
+      }
+    : {
+        sectionLabel: "Kardoor entrance and showroom",
+        imageAlt: "Modern villa entrance — Kardoor steel door",
+        line1: "The Door",
+        accent: "to Your",
+        line2: "Dreams",
+        subtitle: "Confidence lives behind the door.",
+        scrollCue: "Scroll"
+      }
+);
+
+// ─────────────────────────────────────────────────────────────
+// REFS
+// ─────────────────────────────────────────────────────────────
+const heroRef = ref<HTMLElement | null>(null);
+const heroImageRef = ref<HTMLImageElement | null>(null);
+const zoomLayerRef = ref<HTMLElement | null>(null);
+const stageRef = ref<HTMLElement | null>(null);
+const canvasRef = ref<HTMLCanvasElement | null>(null);
+
+const turntableProgress = ref(0);
+const isShowroomActive = ref(false);
+
+let teardown: (() => void) | undefined;
+
+// ─────────────────────────────────────────────────────────────
+// MOUNTED
+// ─────────────────────────────────────────────────────────────
+onMounted(() => {
+  const hero = heroRef.value;
+  const heroImage = heroImageRef.value;
+  const zoomLayer = zoomLayerRef.value;
+  const stage = stageRef.value;
+  const canvas = canvasRef.value;
+
+  if (!hero || !heroImage || !zoomLayer || !stage || !canvas) return;
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const context = canvas.getContext("2d");
+  if (!context) return;
+
+  let showroomOriginX = 0;
+  let showroomOriginY = 0;
+  let showroomAnchorX = 0;
+  let showroomAnchorY = 0;
+
+  const isMobile = window.matchMedia("(max-width: 768px)").matches;
+  const frameStep = isMobile ? 2 : 1;
+  const frameLoadWidth = isMobile ? 768 : undefined;
+
+  const activeFrames: number[] = [];
+  for (let i = 1; i <= FRAME_COUNT; i += frameStep) activeFrames.push(i);
+  if (activeFrames[activeFrames.length - 1] !== FRAME_COUNT) {
+    activeFrames.push(FRAME_COUNT);
+  }
+
+  // ───────────── FRAME LOADER + PORTAL PROCESSING ─────────────
+  /**
+   * Her frame yüklendiğinde:
+   *  1. Offscreen canvas'a kapı crop'unu çiz.
+   *  2. Siyah pixel'leri alpha=0 yap (portal mask).
+   *  3. Sonucu HTMLCanvasElement olarak cache'le.
+   *
+   * Böylece kapının arkası şeffaf olur ve altındaki showroom görünür.
+   */
+  const processedFrames = new Map<number, HTMLCanvasElement>();
+  const pendingFrames = new Map<number, Promise<HTMLCanvasElement>>();
+  let currentFrameNumber = -1;
+  let pendingFrameNumber = -1;
+
+  const processFrameForPortal = (img: HTMLImageElement): HTMLCanvasElement => {
+    const useFull =
+      img.naturalWidth >= RENDER_DOOR_CROP_FULL.x + RENDER_DOOR_CROP_FULL.width &&
+      img.naturalHeight >= RENDER_DOOR_CROP_FULL.y + RENDER_DOOR_CROP_FULL.height;
+    const crop = useFull ? RENDER_DOOR_CROP_FULL : RENDER_DOOR_CROP_FALLBACK;
+
+    const off = document.createElement("canvas");
+    off.width = crop.width;
+    off.height = crop.height;
+    const offCtx = off.getContext("2d");
+    if (!offCtx) return off;
+
+    offCtx.drawImage(
+      img,
+      crop.x, crop.y, crop.width, crop.height,
+      0, 0, crop.width, crop.height
+    );
+
+    // CORS sebebiyle getImageData başarısız olabilir, try-catch
+    try {
+      const imageData = offCtx.getImageData(0, 0, crop.width, crop.height);
+      const pixels = imageData.data;
+
+      for (let i = 0; i < pixels.length; i += 4) {
+        const r = pixels[i] ?? 0;
+        const g = pixels[i + 1] ?? 0;
+        const b = pixels[i + 2] ?? 0;
+        // En parlak kanal — siyahlık ölçüsü
+        const brightness = Math.max(r, g, b);
+
+        if (brightness < PORTAL_BLACK_THRESHOLD) {
+          // Tam şeffaf
+          pixels[i + 3] = 0;
+        } else if (brightness < PORTAL_BLACK_THRESHOLD + PORTAL_FEATHER) {
+          // Yumuşak geçiş (anti-aliasing kenarlar için)
+          const t = (brightness - PORTAL_BLACK_THRESHOLD) / PORTAL_FEATHER;
+          pixels[i + 3] = Math.round((pixels[i + 3] ?? 255) * t);
+        }
+      }
+
+      offCtx.putImageData(imageData, 0, 0);
+    } catch {
+      // CORS taint — fallback: işlemsiz canvas dön
+      // ImageKit CORS açık olduğu için bu normalde gerçekleşmez
+    }
+
+    return off;
+  };
+
+  const loadFrame = (n: number): Promise<HTMLCanvasElement> => {
+    const cached = processedFrames.get(n);
+    if (cached) return Promise.resolve(cached);
+
+    const pending = pendingFrames.get(n);
+    if (pending) return pending;
+
+    const img = new Image();
+    img.crossOrigin = "anonymous"; // getImageData için kritik
+    img.decoding = "async";
+    img.src = frameUrl(n, frameLoadWidth);
+
+    const promise = (img.decode
+      ? img.decode().catch(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              img.onload = () => resolve();
+              img.onerror = () => reject(new Error("frame load failed"));
+            })
+        )
+      : new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error("frame load failed"));
+        })
+    )
+      .then(() => {
+        const processed = processFrameForPortal(img);
+        processedFrames.set(n, processed);
+        return processed;
+      })
+      .finally(() => {
+        pendingFrames.delete(n);
+      });
+
+    pendingFrames.set(n, promise);
+    return promise;
+  };
+
+  // Önce key frame'ler, sonra hepsi
+  const warmCache = () => {
+    const keyFrames = [
+      activeFrames[0],
+      activeFrames[Math.floor(activeFrames.length * 0.25)],
+      activeFrames[Math.floor(activeFrames.length * 0.5)],
+      activeFrames[Math.floor(activeFrames.length * 0.75)],
+      activeFrames[activeFrames.length - 1]
+    ].filter((v): v is number => typeof v === "number");
+
+    const queue = Array.from(new Set([...keyFrames, ...activeFrames]));
+    let idx = 0;
+    let warmTimer: number | null = null;
+
+    const tick = () => {
+      if (idx >= queue.length) {
+        warmTimer = null;
+        return;
+      }
+      loadFrame(queue[idx++]!).catch(() => undefined);
+      warmTimer = window.setTimeout(tick, 45);
+    };
+
+    tick();
+    return () => {
+      if (warmTimer) window.clearTimeout(warmTimer);
+    };
+  };
+
+  // ───────────── CANVAS DRAW ─────────────
+  const drawFrame = (processed: HTMLCanvasElement) => {
+    const w = Math.max(1, Math.round(stage.clientWidth));
+    const h = Math.max(1, Math.round(stage.clientHeight));
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cw = Math.max(1, Math.round(w * dpr));
+    const ch = Math.max(1, Math.round(h * dpr));
+
+    if (canvas.width !== cw) canvas.width = cw;
+    if (canvas.height !== ch) canvas.height = ch;
+
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, w, h);
+    context.drawImage(processed, 0, 0, w, h);
+  };
+
+  const requestFrame = (n: number) => {
+    if (currentFrameNumber === n) return;
+
+    const cached = processedFrames.get(n);
+    if (cached) {
+      currentFrameNumber = n;
+      drawFrame(cached);
+      return;
+    }
+
+    pendingFrameNumber = n;
+    loadFrame(n)
+      .then((processed) => {
+        if (pendingFrameNumber !== n) return;
+        currentFrameNumber = n;
+        drawFrame(processed);
+      })
+      .catch(() => undefined);
+  };
+
+  // ───────────── DOOR ALIGNMENT ─────────────
+  const updateStagePosition = () => {
+    const bounds = hero.getBoundingClientRect();
+    const natW = heroImage.naturalWidth || HERO_NATURAL.width;
+    const natH = heroImage.naturalHeight || HERO_NATURAL.height;
+
+    const scale = Math.max(bounds.width / natW, bounds.height / natH);
+    const renderedW = natW * scale;
+
+    const offsetX = (bounds.width - renderedW) * 0.5;
+    const offsetY = 0;
+
+    const doorLeft = offsetX + HERO_DOOR_RECT.x * scale;
+    const doorTop = offsetY + HERO_DOOR_RECT.y * scale;
+    const doorW = HERO_DOOR_RECT.width * scale;
+    const doorH = HERO_DOOR_RECT.height * scale;
+
+    const originX = doorLeft + doorW * 0.5;
+    const originY = doorTop + doorH * 0.5;
+    const showroomInfoW = Math.min(540, Math.max(360, bounds.width * 0.38));
+    const showroomStageW = Math.max(1, bounds.width - showroomInfoW);
+    const showroomStageX = Math.min(
+      showroomStageW * 0.34,
+      Math.max(showroomStageW * 0.18, bounds.width * 0.28)
+    );
+    const showroomStageY = bounds.height * 0.96;
+    const showroomDoorH = Math.min(640, Math.max(420, bounds.height * 0.58));
+
+    showroomOriginX = originX;
+    showroomOriginY = originY;
+    showroomAnchorX = showroomStageX;
+    showroomAnchorY = showroomStageY - showroomDoorH * 1.22 * 0.5;
+
+    stage.style.setProperty("--door-left", `${doorLeft}px`);
+    stage.style.setProperty("--door-top", `${doorTop}px`);
+    stage.style.setProperty("--door-width", `${doorW}px`);
+    stage.style.setProperty("--door-height", `${doorH}px`);
+    hero.style.setProperty("--zoom-origin-x", `${originX}px`);
+    hero.style.setProperty("--zoom-origin-y", `${originY}px`);
+    zoomLayer.style.setProperty("--zoom-origin-x", `${originX}px`);
+    zoomLayer.style.setProperty("--zoom-origin-y", `${originY}px`);
+
+    const cur = processedFrames.get(currentFrameNumber);
+    if (cur) drawFrame(cur);
+  };
+
+  // ───────────── MASTER PROGRESS ─────────────
+  const SEQ_END = 0.30;
+  const HOLD_END = 0.25;
+  const FIRST_DOOR_SETTLE_START = 0.36;
+  const TURNTABLE_START = 0.68;
+  const TURNTABLE_END = 0.86;
+  const HORIZONTAL_SLIDE_START = 0.88;
+
+  const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+  const easeInOut = (t: number) => t * t * (3 - 2 * t);
+
+  const updateMaster = (raw: number) => {
+    const p = clamp01(raw);
+
+    const seqP = clamp01(p / SEQ_END);
+    const frameIdx = Math.min(
+      activeFrames.length - 1,
+      Math.floor(seqP * activeFrames.length)
+    );
+    requestFrame(activeFrames[frameIdx] ?? 1);
+
+    const settleP = clamp01((p - FIRST_DOOR_SETTLE_START) / (TURNTABLE_START - FIRST_DOOR_SETTLE_START));
+    const zoomP = easeInOut(clamp01((p - HOLD_END) / (TURNTABLE_START - HOLD_END)));
+    const zoomScale = 1 + zoomP * 16;
+    const showroomScale = 0.14 + zoomP * 0.86;
+    const showroomContentOpacity = 0.12 + easeInOut(clamp01((settleP - 0.04) / 0.48)) * 0.88;
+    const showroomPortalLock = 1 - easeInOut(clamp01((settleP - 0.56) / 0.26));
+    const showroomAlignX =
+      (1 - showroomScale) * (showroomOriginX - showroomAnchorX) * showroomPortalLock;
+    const showroomAlignY =
+      (1 - showroomScale) * (showroomOriginY - showroomAnchorY) * showroomPortalLock;
+    const showroomUiReveal = easeInOut(clamp01((settleP - 0.28) / 0.42));
+    const showroomAtmosphereReveal = easeInOut(clamp01((settleP - 0.72) / 0.24));
+    const showroomDoorRiseY = (1 - easeInOut(clamp01((settleP - 0.08) / 0.58))) * 86;
+    const showroomOrbitDepth = showroomAtmosphereReveal;
+    const showroomNeighborRiseY = (1 - showroomOrbitDepth) * 82;
+
+    zoomLayer.style.setProperty("--zoom-scale", `${zoomScale}`);
+    hero.style.setProperty("--showroom-scale", `${showroomScale}`);
+    hero.style.setProperty("--showroom-align-x", `${showroomAlignX}px`);
+    hero.style.setProperty("--showroom-align-y", `${showroomAlignY}px`);
+    hero.style.setProperty("--showroom-content-opacity", `${showroomContentOpacity}`);
+    hero.style.setProperty("--showroom-ui-opacity", `${showroomUiReveal}`);
+    hero.style.setProperty("--showroom-ui-x", `${(1 - showroomUiReveal) * 76}px`);
+    hero.style.setProperty("--showroom-backdrop-opacity", `${showroomAtmosphereReveal}`);
+    hero.style.setProperty("--showroom-text-clip", `${100 - showroomAtmosphereReveal * 100}%`);
+    hero.style.setProperty("--showroom-text-x", `${(1 - showroomAtmosphereReveal) * -52}px`);
+    hero.style.setProperty("--showroom-door-rise-y", `${showroomDoorRiseY}px`);
+    hero.style.setProperty("--showroom-neighbor-rise-y", `${showroomNeighborRiseY}px`);
+    hero.style.setProperty("--showroom-orbit-depth", `${showroomOrbitDepth}`);
+
+    const fadeOutStart = FIRST_DOOR_SETTLE_START + (TURNTABLE_START - FIRST_DOOR_SETTLE_START) * 0.42;
+    const zoomFade = 1 - easeInOut(clamp01((p - fadeOutStart) / (TURNTABLE_START - fadeOutStart)));
+    zoomLayer.style.setProperty("--zoom-fade", `${zoomFade}`);
+
+    const copyFade = clamp01((p - 0.04) / 0.2);
+    hero.style.setProperty("--hero-copy-opacity", `${1 - copyFade}`);
+    hero.style.setProperty("--hero-copy-y", `${copyFade * -28}px`);
+    hero.style.setProperty("--hero-cue-opacity", `${1 - clamp01(p / 0.12)}`);
+
+    const ttP = clamp01((p - TURNTABLE_START) / (TURNTABLE_END - TURNTABLE_START));
+    const horizontalSlideP = easeInOut(clamp01((p - HORIZONTAL_SLIDE_START) / (1 - HORIZONTAL_SLIDE_START)));
+    hero.style.setProperty("--showroom-page-x", `${horizontalSlideP * -100}%`);
+    turntableProgress.value = ttP;
+    isShowroomActive.value = p >= HOLD_END;
+  };
+
+  // ───────────── SCROLL TRIGGER ─────────────
+  const DOOR_COUNT_TT = 5;
+  const DOOR_SNAP_POINTS = Array.from({ length: DOOR_COUNT_TT }, (_, i) =>
+    TURNTABLE_START + (i / (DOOR_COUNT_TT - 1)) * (TURNTABLE_END - TURNTABLE_START)
+  );
+  const DOOR_SNAP_PAD = 0.018;
+  const DOOR_SNAP_COOLDOWN_MS = 560;
+  const HORIZONTAL_SLIDE_COOLDOWN_MS = 700;
+
+  let trigger: ScrollTrigger | undefined;
+  let isAutoSettling = false;
+  let hasAutoSettledIntoShowroom = false;
+  let settleTween: gsap.core.Tween | undefined;
+  let unlockInput: (() => void) | undefined;
+  let lastTouchY = 0;
+  let doorSnapCooldownUntil = 0;
+  let horizontalSlideCooldownUntil = 0;
+
+  const consumeScrollEvent = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if ("stopImmediatePropagation" in event) {
+      event.stopImmediatePropagation();
+    }
+  };
+
+  const blockScrollInput = () => {
+    unlockInput?.();
+
+    const stop = (event: Event) => {
+      consumeScrollEvent(event);
+    };
+    const stopKeys = (event: KeyboardEvent) => {
+      if (
+        [
+          " ",
+          "ArrowDown",
+          "ArrowUp",
+          "PageDown",
+          "PageUp",
+          "Home",
+          "End"
+        ].includes(event.key)
+      ) {
+        stop(event);
+      }
+    };
+    const options: AddEventListenerOptions = { capture: true, passive: false };
+
+    window.addEventListener("wheel", stop, options);
+    window.addEventListener("touchmove", stop, options);
+    window.addEventListener("keydown", stopKeys, { capture: true });
+
+    unlockInput = () => {
+      window.removeEventListener("wheel", stop, options);
+      window.removeEventListener("touchmove", stop, options);
+      window.removeEventListener("keydown", stopKeys, { capture: true });
+      unlockInput = undefined;
+    };
+  };
+
+  const autoSettleTo = (
+    progress: number,
+    options: {
+      duration?: number;
+      ease?: string;
+      markShowroomSettled?: boolean;
+      onComplete?: () => void;
+    } = {}
+  ) => {
+    if (!trigger || isAutoSettling) return;
+
+    const startProgress = trigger.progress;
+    const startY = trigger.start + (trigger.end - trigger.start) * startProgress;
+    const targetY = trigger.start + (trigger.end - trigger.start) * progress;
+    const scrollState = { progress: trigger.progress };
+
+    isAutoSettling = true;
+    blockScrollInput();
+    settleTween?.kill();
+    settleTween = gsap.to(scrollState, {
+      progress,
+      duration: options.duration ?? 2.15,
+      ease: options.ease ?? "sine.inOut",
+      overwrite: true,
+      onUpdate: () => {
+        const t = (scrollState.progress - startProgress) / (progress - startProgress || 1);
+        const y = startY + (targetY - startY) * clamp01(t);
+        window.scrollTo(0, y);
+        updateMaster(scrollState.progress);
+      },
+      onComplete: () => {
+        window.scrollTo(0, targetY);
+        updateMaster(progress);
+        isAutoSettling = false;
+        if (options.markShowroomSettled !== false) {
+          hasAutoSettledIntoShowroom = true;
+        }
+        unlockInput?.();
+        options.onComplete?.();
+      },
+      onInterrupt: () => {
+        isAutoSettling = false;
+        unlockInput?.();
+      }
+    });
+  };
+
+  const shouldTakeOverSettle = (direction: number) =>
+    Boolean(
+      trigger &&
+        direction > 0 &&
+        !hasAutoSettledIntoShowroom &&
+        trigger.progress >= FIRST_DOOR_SETTLE_START - 0.025 &&
+        trigger.progress < TURNTABLE_START
+    );
+
+  const shouldReverseSettle = (direction: number) =>
+    Boolean(
+      trigger &&
+        direction < 0 &&
+        hasAutoSettledIntoShowroom &&
+        trigger.progress > FIRST_DOOR_SETTLE_START + 0.018 &&
+        trigger.progress <= TURNTABLE_START + DOOR_SNAP_PAD
+    );
+
+  const getNearestDoorIndex = (progress: number) => {
+    let nearestIndex = 0;
+    let nearestDistance = Math.abs(progress - DOOR_SNAP_POINTS[0]!);
+
+    for (let i = 1; i < DOOR_SNAP_POINTS.length; i++) {
+      const distance = Math.abs(progress - DOOR_SNAP_POINTS[i]!);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = i;
+      }
+    }
+
+    return nearestIndex;
+  };
+
+  const shouldSnapDoor = (direction: number) =>
+    Boolean(
+      trigger &&
+        direction !== 0 &&
+        hasAutoSettledIntoShowroom &&
+        trigger.progress >= TURNTABLE_START - DOOR_SNAP_PAD &&
+        trigger.progress <= TURNTABLE_END + DOOR_SNAP_PAD
+    );
+
+  const isDoorSnapCoolingDown = () =>
+    Boolean(
+      trigger &&
+        performance.now() < doorSnapCooldownUntil &&
+        trigger.progress >= TURNTABLE_START - DOOR_SNAP_PAD &&
+        trigger.progress <= TURNTABLE_END + DOOR_SNAP_PAD
+    );
+
+  const isHorizontalSlideCoolingDown = () =>
+    Boolean(trigger && performance.now() < horizontalSlideCooldownUntil);
+
+  const snapDoor = (direction: number, event?: Event) => {
+    if (!trigger || !shouldSnapDoor(direction)) return false;
+
+    const currentIndex = getNearestDoorIndex(trigger.progress);
+    const targetIndex = currentIndex + (direction > 0 ? 1 : -1);
+
+    if (targetIndex < 0 || targetIndex >= DOOR_SNAP_POINTS.length) {
+      return false;
+    }
+
+    if (event) {
+      consumeScrollEvent(event);
+    }
+
+    doorSnapCooldownUntil = performance.now() + 920 + DOOR_SNAP_COOLDOWN_MS;
+
+    autoSettleTo(DOOR_SNAP_POINTS[targetIndex]!, {
+      duration: 0.92,
+      ease: "power3.inOut",
+      markShowroomSettled: false
+    });
+
+    return true;
+  };
+
+  const shouldAutoSlideHorizontal = (direction: number) =>
+    Boolean(
+      trigger &&
+        direction > 0 &&
+        hasAutoSettledIntoShowroom &&
+        trigger.progress >= TURNTABLE_END - DOOR_SNAP_PAD &&
+        trigger.progress < 1
+    );
+
+  const autoSlideHorizontal = (event?: Event) => {
+    if (!trigger || !shouldAutoSlideHorizontal(1)) return false;
+
+    if (event) {
+      consumeScrollEvent(event);
+    }
+
+    horizontalSlideCooldownUntil = performance.now() + 2600 + HORIZONTAL_SLIDE_COOLDOWN_MS;
+    autoSettleTo(1, {
+      duration: 2.6,
+      ease: "sine.inOut",
+      markShowroomSettled: false
+    });
+
+    return true;
+  };
+
+  const reverseSettleToEntrance = (event?: Event) => {
+    if (!trigger || !shouldReverseSettle(-1)) return false;
+
+    if (event) {
+      consumeScrollEvent(event);
+    }
+
+    doorSnapCooldownUntil = performance.now() + 1750;
+    autoSettleTo(FIRST_DOOR_SETTLE_START, {
+      duration: 1.55,
+      ease: "sine.inOut",
+      markShowroomSettled: false,
+      onComplete: () => {
+        hasAutoSettledIntoShowroom = false;
+      }
+    });
+
+    return true;
+  };
+
+  const takeOverSettle = (event?: Event) => {
+    if (event) {
+      consumeScrollEvent(event);
+    }
+    autoSettleTo(TURNTABLE_START);
+  };
+
+  const onSettleWheel = (event: WheelEvent) => {
+    if (isHorizontalSlideCoolingDown()) {
+      consumeScrollEvent(event);
+      return;
+    }
+
+    if (isDoorSnapCoolingDown()) {
+      consumeScrollEvent(event);
+      return;
+    }
+
+    if (isAutoSettling) {
+      takeOverSettle(event);
+      return;
+    }
+
+    if (snapDoor(event.deltaY, event)) {
+      return;
+    }
+
+    if (event.deltaY < 0 && reverseSettleToEntrance(event)) {
+      return;
+    }
+
+    if (event.deltaY > 0 && autoSlideHorizontal(event)) {
+      return;
+    }
+
+    if (shouldTakeOverSettle(event.deltaY)) {
+      takeOverSettle(event);
+    }
+  };
+
+  const onSettleTouchStart = (event: TouchEvent) => {
+    lastTouchY = event.touches[0]?.clientY ?? 0;
+  };
+
+  const onSettleTouchMove = (event: TouchEvent) => {
+    const y = event.touches[0]?.clientY ?? lastTouchY;
+    const direction = lastTouchY - y;
+    lastTouchY = y;
+
+    if (isHorizontalSlideCoolingDown()) {
+      consumeScrollEvent(event);
+      return;
+    }
+
+    if (isDoorSnapCoolingDown()) {
+      consumeScrollEvent(event);
+      return;
+    }
+
+    if (isAutoSettling) {
+      takeOverSettle(event);
+      return;
+    }
+
+    if (snapDoor(direction, event)) {
+      return;
+    }
+
+    if (direction < 0 && reverseSettleToEntrance(event)) {
+      return;
+    }
+
+    if (direction > 0 && autoSlideHorizontal(event)) {
+      return;
+    }
+
+    if (shouldTakeOverSettle(direction)) {
+      takeOverSettle(event);
+    }
+  };
+
+  const onSettleKeydown = (event: KeyboardEvent) => {
+    const forwardKeys = [" ", "ArrowDown", "PageDown", "End"];
+    const backwardKeys = ["ArrowUp", "PageUp", "Home"];
+    const direction = forwardKeys.includes(event.key)
+      ? 1
+      : backwardKeys.includes(event.key)
+        ? -1
+      : 0;
+
+    if (isHorizontalSlideCoolingDown()) {
+      consumeScrollEvent(event);
+      return;
+    }
+
+    if (isDoorSnapCoolingDown()) {
+      consumeScrollEvent(event);
+      return;
+    }
+
+    if (isAutoSettling) {
+      takeOverSettle(event);
+      return;
+    }
+
+    if (snapDoor(direction, event)) {
+      return;
+    }
+
+    if (direction < 0 && reverseSettleToEntrance(event)) {
+      return;
+    }
+
+    if (direction > 0 && autoSlideHorizontal(event)) {
+      return;
+    }
+
+    if (shouldTakeOverSettle(direction)) {
+      takeOverSettle(event);
+    }
+  };
+
+  trigger = ScrollTrigger.create({
+    trigger: hero,
+    start: "top top",
+    end: () => `+=${Math.round(window.innerHeight * 8.5)}`,
+    scrub: 0.55,
+    pin: true,
+    pinSpacing: true,
+    anticipatePin: 1,
+    invalidateOnRefresh: true,
+    onUpdate: (self) => {
+      if (isAutoSettling) return;
+
+      updateMaster(self.progress);
+
+      if (
+        self.direction > 0 &&
+        !isAutoSettling &&
+        !hasAutoSettledIntoShowroom &&
+        self.progress >= FIRST_DOOR_SETTLE_START &&
+        self.progress < TURNTABLE_START
+      ) {
+        autoSettleTo(TURNTABLE_START);
+      }
+
+      if (self.direction < 0 && self.progress < FIRST_DOOR_SETTLE_START - 0.045) {
+        hasAutoSettledIntoShowroom = false;
+      }
+    },
+    onRefresh: (self) => {
+      updateStagePosition();
+      updateMaster(self.progress);
+    }
+  });
+
+  // ───────────── INIT ─────────────
+  const onResize = () => {
+    updateStagePosition();
+    ScrollTrigger.refresh();
+  };
+
+  const stopWarm = warmCache();
+
+  loadFrame(1)
+    .then((processed) => {
+      currentFrameNumber = 1;
+      updateStagePosition();
+      drawFrame(processed);
+    })
+    .catch(() => undefined);
+
+  if (heroImage.complete) updateStagePosition();
+  else heroImage.addEventListener("load", updateStagePosition, { once: true });
+
+  window.addEventListener("resize", onResize);
+  window.addEventListener("wheel", onSettleWheel, { capture: true, passive: false });
+  window.addEventListener("touchstart", onSettleTouchStart, { capture: true, passive: true });
+  window.addEventListener("touchmove", onSettleTouchMove, { capture: true, passive: false });
+  window.addEventListener("keydown", onSettleKeydown, { capture: true });
+
+  const onPageShow = () => {
+    updateStagePosition();
+    trigger?.refresh();
+  };
+  window.addEventListener("pageshow", onPageShow);
+
+  teardown = () => {
+    settleTween?.kill();
+    unlockInput?.();
+    trigger?.kill(true);
+    stopWarm();
+    window.removeEventListener("resize", onResize);
+    window.removeEventListener("wheel", onSettleWheel, { capture: true });
+    window.removeEventListener("touchstart", onSettleTouchStart, { capture: true });
+    window.removeEventListener("touchmove", onSettleTouchMove, { capture: true });
+    window.removeEventListener("keydown", onSettleKeydown, { capture: true });
+    window.removeEventListener("pageshow", onPageShow);
+    processedFrames.clear();
+    pendingFrames.clear();
+  };
+});
+
+onBeforeUnmount(() => {
+  teardown?.();
+});
+</script>
+
+<template>
+  <section
+    ref="heroRef"
+    class="entrance-door"
+    :class="{ 'entrance-door--showroom-active': isShowroomActive }"
+    :aria-label="copy.sectionLabel"
+  >
+    <!-- SHOWROOM (her zaman arkada, opacity sabit) -->
+    <div class="entrance-door__showroom" aria-hidden="false">
+      <ShowroomTurntable :progress="turntableProgress" />
+    </div>
+
+    <div class="entrance-door__next-panel" aria-hidden="true" />
+
+    <!-- HERO + FRAME (üstte, zoom ile kaybolur) -->
+    <div ref="zoomLayerRef" class="entrance-door__zoom-layer">
+      <img
+        ref="heroImageRef"
+        :src="heroAssets.day"
+        :alt="copy.imageAlt"
+        class="entrance-door__hero-image entrance-door__hero-image--day"
+        decoding="async"
+        loading="eager"
+        fetchpriority="high"
+        draggable="false"
+        crossorigin="anonymous"
+      >
+      <img
+        :src="heroAssets.night"
+        alt=""
+        class="entrance-door__hero-image entrance-door__hero-image--night"
+        aria-hidden="true"
+        decoding="async"
+        loading="eager"
+        draggable="false"
+        crossorigin="anonymous"
+      >
+
+      <!-- Canvas: kapı açılış sekansı (siyah alanlar şeffaf) -->
+      <div ref="stageRef" class="entrance-door__stage" aria-hidden="true">
+        <canvas ref="canvasRef" class="entrance-door__canvas" />
+      </div>
+    </div>
+
+    <!-- HERO COPY -->
+    <div class="entrance-door__copy">
+      <h1 class="entrance-door__heading">
+        <span>{{ copy.line1 }}</span>
+        <span>
+          <em>{{ copy.accent }}</em> {{ copy.line2 }}
+        </span>
+      </h1>
+      <p class="entrance-door__subtitle">{{ copy.subtitle }}</p>
+    </div>
+
+    <div class="entrance-door__cue" aria-hidden="true">
+      <span>{{ copy.scrollCue }}</span>
+      <i />
+    </div>
+  </section>
+</template>
