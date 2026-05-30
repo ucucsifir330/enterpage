@@ -128,9 +128,9 @@
 
   font-family: var(--font-display);
   font-size: clamp(
-    150px,
-    calc(24vw * var(--backdrop-scale)),
-    calc(380px * var(--backdrop-scale))
+    120px,
+    calc(19.8vw * var(--backdrop-scale)),
+    calc(800px * var(--backdrop-scale))
   );
   font-weight: 800;
   letter-spacing: -0.05em;
@@ -154,7 +154,7 @@
   width: max-content;
   white-space: nowrap;
   will-change: transform;
-  animation: showroom-backdrop-marquee 56s linear infinite;
+  animation: showroom-backdrop-marquee 160s linear infinite;
 }
 
 .showroom-turntable__backdrop-marquee-group {
@@ -260,11 +260,21 @@
 .showroom-turntable__door-image {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: fill;
   object-position: center bottom;
   filter: drop-shadow(var(--st-door-shadow));
   user-select: none;
   pointer-events: none;
+}
+
+.showroom-turntable__door-image--emerald-line {
+  transform: scaleX(1.14);
+  transform-origin: center bottom;
+}
+
+.showroom-turntable__door-image--ivory-line {
+  transform: scaleX(1.1);
+  transform-origin: center bottom;
 }
 
 /* PLATFORM — yere paralel oval */
@@ -314,16 +324,16 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: clamp(18px, 2.4vh, 28px);
-  padding: clamp(48px, 8vh, 96px) clamp(36px, 4.5vw, 80px) clamp(48px, 8vh, 96px) clamp(0px, 2vw, 28px);
+  gap: clamp(16px, 1.45vw, 48px);
+  padding: clamp(48px, 8vh, 180px) clamp(36px, 4.16vw, 140px) clamp(48px, 8vh, 180px) clamp(0px, 1.45vw, 60px);
   z-index: 4;
 }
 
 .showroom-turntable__info-block {
   display: flex;
   flex-direction: column;
-  gap: clamp(18px, 2.4vh, 28px);
-  max-width: 460px;
+  gap: clamp(16px, 1.45vw, 48px);
+  max-width: clamp(460px, 24vw, 800px);
 }
 
 /* COUNTER */
@@ -357,10 +367,14 @@
 
 .showroom-turntable__counter-line {
   position: relative;
-  width: 38px;
+  width: 46px;
   height: 1px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--st-text-soft) 58%, transparent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--st-text) 10%, transparent),
+    color-mix(in srgb, var(--st-text) 44%, transparent)
+  );
 }
 
 .showroom-turntable__counter-line::before,
@@ -372,7 +386,11 @@
 }
 
 .showroom-turntable__counter-line::before {
-  background: var(--st-accent);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--st-accent) 30%, transparent),
+    var(--st-accent)
+  );
   transform: scaleX(var(--counter-progress));
   transition: transform 780ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -394,16 +412,19 @@
 /* NAME — Barlow Condensed + Instrument Serif italic kombinasyonu */
 .showroom-turntable__name {
   margin: 0;
-  line-height: 0.86;
+  line-height: 0.96;
   letter-spacing: -0.035em;
+  --name-fit-scale: 1;
 }
 
 .showroom-turntable__name-lead {
   display: block;
   font-family: var(--font-display);
-  font-size: clamp(56px, 7.2vw, 112px);
+  font-size: calc(clamp(48px, 5.83vw, 240px) * var(--name-fit-scale));
   font-weight: 700;
   color: var(--st-text);
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .showroom-turntable__name-tail {
@@ -411,24 +432,24 @@
   font-family: var(--font-serif);
   font-style: italic;
   font-weight: 400;
-  font-size: clamp(56px, 7vw, 108px);
+  font-size: clamp(48px, 5.62vw, 230px);
   color: var(--st-accent);
   letter-spacing: -0.02em;
-  margin-top: -0.06em;
+  margin-top: 0.04em;
 }
 
 /* SERIES */
 .showroom-turntable__series {
   font-family: var(--font-serif);
   font-style: italic;
-  font-size: clamp(15px, 1.15vw, 19px);
+  font-size: clamp(14px, 0.98vw, 36px);
   color: var(--st-text-muted);
   margin: 0;
 }
 
 /* DIVIDER */
 .showroom-turntable__divider {
-  width: 64px;
+  width: clamp(48px, 3.33vw, 72px);
   height: 1px;
   background: linear-gradient(90deg, var(--st-line), transparent);
 }
@@ -436,17 +457,17 @@
 /* SPEC TEXT */
 .showroom-turntable__spec {
   font-family: var(--font-body);
-  font-size: clamp(13px, 1vw, 15px);
+  font-size: clamp(12px, 0.78vw, 28px);
   line-height: 1.65;
   color: var(--st-text-muted);
   margin: 0;
-  max-width: 36ch;
+  max-width: 42ch;
 }
 
 /* META LINE */
 .showroom-turntable__meta {
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: clamp(10px, 0.57vw, 20px);
   font-weight: 500;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -457,21 +478,22 @@
 /* ACTIONS */
 .showroom-turntable__actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: clamp(10px, 0.9vw, 16px);
   margin-top: clamp(8px, 1.2vh, 16px);
 }
 
 .showroom-turntable__action {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 15px 26px;
+  gap: clamp(8px, 0.62vw, 24px);
+  padding: clamp(12px, 0.78vw, 30px) clamp(20px, 1.35vw, 50px);
   background: transparent;
   border: 1px solid var(--st-line);
   color: var(--st-text);
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: clamp(10px, 0.57vw, 20px);
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -541,21 +563,113 @@
 /* DOTS — pagination */
 .showroom-turntable__dots {
   display: flex;
-  gap: 10px;
+  gap: 4px;
   align-items: center;
   margin-top: clamp(10px, 1.6vh, 28px);
 }
 
 .showroom-turntable__dot {
-  width: 24px;
+  position: relative;
+  width: 34px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.showroom-turntable__dot::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30px;
   height: 1px;
   background: var(--st-text-soft);
+  transform: translate(-50%, -50%);
   transition: background 360ms var(--ease-soft), width 360ms var(--ease-soft);
 }
 
 .showroom-turntable__dot--active {
+  width: 46px;
+}
+
+.showroom-turntable__dot--active::before {
   background: var(--st-accent);
-  width: 40px;
+  width: 42px;
+}
+
+/* Corner door navigation */
+.showroom-turntable__door-nav {
+  position: absolute;
+  right: clamp(22px, 3.2vw, 52px);
+  bottom: clamp(22px, 4vh, 46px);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.showroom-turntable__door-nav-button {
+  width: clamp(58px, 4.75vw, 74px);
+  height: clamp(58px, 4.75vw, 74px);
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(7, 16, 24, 0.30);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--st-text);
+  box-shadow:
+    0 18px 44px rgba(7, 16, 24, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  cursor: pointer;
+  transition:
+    transform 280ms var(--ease-soft),
+    border-color 280ms var(--ease-soft),
+    background 280ms var(--ease-soft),
+    color 280ms var(--ease-soft),
+    opacity 280ms var(--ease-soft);
+}
+
+.showroom-turntable__door-nav-button svg {
+  width: 25px;
+  height: 25px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.showroom-turntable__door-nav-button:hover:not(:disabled),
+.showroom-turntable__door-nav-button:focus-visible:not(:disabled) {
+  border-color: rgba(139, 106, 63, 0.48);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--st-text);
+}
+
+.showroom-turntable__door-nav-button[data-direction="prev"]:hover:not(:disabled) svg,
+.showroom-turntable__door-nav-button[data-direction="prev"]:focus-visible:not(:disabled) svg {
+  transform: translateX(-4px);
+}
+
+.showroom-turntable__door-nav-button[data-direction="next"]:hover:not(:disabled) svg,
+.showroom-turntable__door-nav-button[data-direction="next"]:focus-visible:not(:disabled) svg {
+  transform: translateX(4px);
+}
+
+.showroom-turntable__door-nav-button:focus-visible {
+  outline: 2px solid rgba(139, 106, 63, 0.52);
+  outline-offset: 4px;
+}
+
+.showroom-turntable__door-nav-button:disabled {
+  cursor: default;
+  opacity: 0.32;
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -643,11 +757,11 @@
 
   .showroom-turntable__name-lead,
   .showroom-turntable__name-tail {
-    font-size: clamp(48px, 9vw, 80px);
+    font-size: clamp(48px, 12vw, 90px);
   }
 
   .showroom-turntable__backdrop-text {
-    font-size: clamp(120px, 26vw, 260px);
+    font-size: clamp(120px, 26vw, 360px);
   }
 }
 
@@ -655,19 +769,35 @@
   .showroom-turntable {
     --orbit-radius-x: min(360px, 46vw);
     --orbit-radius-y: 50px;
-    --st-door-height: clamp(300px, 46vh, 420px);
-    --st-door-width: clamp(140px, 34vw, 210px);
+    --st-door-height: clamp(320px, 50vh, 480px);
+    --st-door-width: clamp(150px, 36vw, 240px);
     --st-stage-y: 88%;
   }
 
   .showroom-turntable__info {
-    padding: 24px 24px 36px;
-    gap: 24px;
+    padding: clamp(24px, 6vh, 40px) 24px;
+    gap: 20px;
   }
 
   .showroom-turntable__action {
     padding: 13px 20px;
     font-size: 10px;
+  }
+
+  .showroom-turntable__door-nav {
+    right: 18px;
+    bottom: 18px;
+    gap: 8px;
+  }
+
+  .showroom-turntable__door-nav-button {
+    width: 54px;
+    height: 54px;
+  }
+
+  .showroom-turntable__door-nav-button svg {
+    width: 22px;
+    height: 22px;
   }
 }
 

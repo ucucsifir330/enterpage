@@ -8,6 +8,7 @@
 
 import { computed } from "vue";
 import { useKardoorLocale } from "~/composables/useKardoorLocale";
+import AdaCtaButton from "./AdaCtaButton.vue";
 
 type Door = {
   id: string;
@@ -148,6 +149,11 @@ const props = defineProps<{
   progress: number; // 0 → 1
 }>();
 
+const emit = defineEmits<{
+  doorStep: [direction: -1 | 1];
+  doorSelect: [index: number];
+}>();
+
 const { locale } = useKardoorLocale();
 
 const TOTAL_ROTATION = 360;
@@ -219,15 +225,11 @@ const orbitDoors = computed(() => {
 
     // Aktife yakın olduğunda hafifçe yükselsin (cinematic lift)
     const lift = nearActive * -6;
-    const visual = door.visual ?? defaultVisual;
-
     return {
       door,
-      x: x + visual.activeX * nearActive,
-      y: y + lift + visual.activeY * nearActive,
-      scale: isTrailingHidden
-        ? 0.001
-        : scale * lerp(1, visual.activeScale, nearActive),
+      x,
+      y: y + lift,
+      scale: isTrailingHidden ? 0.001 : scale,
       opacity,
       blur: isTrailingHidden ? 16 : blur,
       zIndex,
@@ -243,16 +245,14 @@ const activeDoor = computed(() => doors[activeIndex.value]!);
 const backdropMarqueeText = computed(() =>
   `${activeDoor.value.nameDisplay.lead} ${activeDoor.value.nameDisplay.tail}`.toLocaleUpperCase("tr-TR")
 );
-const backdropScale = computed(() => {
-  const length = activeDoor.value.nameDisplay.lead.length;
-  return clamp(5.6 / length, 0.64, 1);
-});
-const activeVisual = computed(() => activeDoor.value.visual ?? defaultVisual);
+const nameFitScale = computed(() =>
+  `${clamp(8.9 / activeDoor.value.nameDisplay.lead.length, 0.82, 1)}`
+);
 const backdropStyle = computed(() => ({
-  "--backdrop-scale": `${backdropScale.value * activeVisual.value.backdropScale}`,
-  "--backdrop-x": activeVisual.value.backdropX,
-  "--backdrop-y": activeVisual.value.backdropY,
-  "--backdrop-opacity": `${activeVisual.value.backdropOpacity}`
+  "--backdrop-scale": "0.96",
+  "--backdrop-x": "0vw",
+  "--backdrop-y": "-4vh",
+  "--backdrop-opacity": "1"
 }));
 const doorNumber = computed(() => String(activeIndex.value + 1).padStart(2, "0"));
 const totalDoors = String(doors.length).padStart(2, "0");
@@ -265,8 +265,20 @@ const t = (key: { tr: string; en: string }) =>
 
 const ui = computed(() =>
   locale.value === "tr"
-    ? { detail: "Detay", quote: "Teklif al" }
-    : { detail: "Detail", quote: "Get quote" }
+    ? {
+        detail: "Detaylar",
+        quote: "Teklif Al",
+        navigation: "Kapı gezinmesi",
+        previousDoor: "Önceki kapı",
+        nextDoor: "Sonraki kapı"
+      }
+    : {
+        detail: "Details",
+        quote: "Get quote",
+        navigation: "Door navigation",
+        previousDoor: "Previous door",
+        nextDoor: "Next door"
+      }
 );
 </script>
 
@@ -323,6 +335,7 @@ const ui = computed(() =>
               :src="item.door.image"
               :alt="t(item.door.name)"
               class="showroom-turntable__door-image"
+              :class="`showroom-turntable__door-image--${item.door.id}`"
               loading="lazy"
               decoding="async"
               draggable="false"
@@ -355,7 +368,10 @@ const ui = computed(() =>
 
       <Transition name="st-info" mode="out-in">
         <div :key="activeDoor.id" class="showroom-turntable__info-block">
-          <h2 class="showroom-turntable__name">
+          <h2
+            class="showroom-turntable__name"
+            :style="{ '--name-fit-scale': nameFitScale }"
+          >
             <span class="showroom-turntable__name-lead">
               {{ activeDoor.nameDisplay.lead }}
             </span>
@@ -379,58 +395,51 @@ const ui = computed(() =>
           </p>
 
           <div class="showroom-turntable__actions">
-            <button
-              type="button"
-              class="showroom-turntable__action showroom-turntable__action--primary"
-            >
-              {{ ui.detail }}
-              <svg
-                class="detail-arrow-icon"
-                width="18"
-                height="11"
-                viewBox="0 0 36 22"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden="true"
-                focusable="false"
-              >
-                <g transform="matrix(1,0,0,1,-419.5,-274.131)">
-                  <g>
-                    <path
-                      class="detail-arrow-line detail-arrow-line-top"
-                      d="M420,274.631L450,274.631C450,274.631 459.044,284.599 450,284.599C440.956,284.599 420,284.646 420,284.646L430.014,274.631"
-                    />
-                    <g transform="matrix(1,-1.22465e-16,-1.22465e-16,-1,0,569.277)">
-                      <path
-                        class="detail-arrow-line detail-arrow-line-bottom"
-                        d="M420,274.631L450,274.631C450,274.631 459.044,284.599 450,284.599C440.956,284.599 420,284.646 420,284.646L430.014,274.631"
-                      />
-                    </g>
-                    <g transform="matrix(1,0,0,1,0,-0.0234189)">
-                      <path
-                        class="detail-arrow-line detail-arrow-line-middle"
-                        d="M420,284.646L450,284.646"
-                      />
-                    </g>
-                  </g>
-                </g>
-              </svg>
-            </button>
-            <button type="button" class="showroom-turntable__action">
-              {{ ui.quote }}
-            </button>
+            <AdaCtaButton :label="ui.detail" href="#" />
+            <AdaCtaButton :label="ui.quote" href="#" variant="outline" icon-position="none" />
           </div>
         </div>
       </Transition>
 
       <!-- Pagination dots -->
-      <div class="showroom-turntable__dots" aria-hidden="true">
-        <span
+      <div class="showroom-turntable__dots" aria-label="Kapı seçimi">
+        <button
           v-for="(_, i) in doors"
           :key="i"
+          type="button"
           class="showroom-turntable__dot"
           :class="{ 'showroom-turntable__dot--active': i === activeIndex }"
+          :aria-label="`${i + 1}. kapıya geç`"
+          :aria-current="i === activeIndex ? 'true' : undefined"
+          @click="emit('doorSelect', i)"
         />
       </div>
     </aside>
+
+    <nav class="showroom-turntable__door-nav" :aria-label="ui.navigation">
+      <button
+        class="showroom-turntable__door-nav-button"
+        data-direction="prev"
+        type="button"
+        :aria-label="ui.previousDoor"
+        :disabled="activeIndex === 0"
+        @click="emit('doorStep', -1)"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M15 6L9 12L15 18" />
+        </svg>
+      </button>
+      <button
+        class="showroom-turntable__door-nav-button"
+        data-direction="next"
+        type="button"
+        :aria-label="ui.nextDoor"
+        @click="emit('doorStep', 1)"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 6L15 12L9 18" />
+        </svg>
+      </button>
+    </nav>
   </div>
 </template>

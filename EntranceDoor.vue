@@ -88,6 +88,16 @@ const turntableProgress = ref(0);
 const isShowroomActive = ref(false);
 
 let teardown: (() => void) | undefined;
+let requestDoorStep: ((direction: -1 | 1) => void) | undefined;
+let requestDoorSelect: ((index: number) => void) | undefined;
+
+const onDoorStep = (direction: -1 | 1) => {
+  requestDoorStep?.(direction);
+};
+
+const onDoorSelect = (index: number) => {
+  requestDoorSelect?.(index);
+};
 
 // ─────────────────────────────────────────────────────────────
 // MOUNTED
@@ -586,6 +596,52 @@ onMounted(() => {
     return true;
   };
 
+  requestDoorStep = (direction: -1 | 1) => {
+    if (!trigger) return;
+
+    const currentProgress = clamp01(trigger.progress);
+    const currentIndex = getNearestDoorIndex(currentProgress);
+    const targetIndex = currentIndex + direction;
+
+    if (targetIndex < 0) return;
+
+    if (targetIndex >= DOOR_SNAP_POINTS.length) {
+      horizontalSlideCooldownUntil = performance.now() + 2600 + HORIZONTAL_SLIDE_COOLDOWN_MS;
+      autoSettleTo(1, {
+        duration: 2.6,
+        ease: "sine.inOut",
+        markShowroomSettled: false
+      });
+      return;
+    }
+
+    if (!hasAutoSettledIntoShowroom && currentProgress < TURNTABLE_START) {
+      hasAutoSettledIntoShowroom = true;
+    }
+
+    doorSnapCooldownUntil = performance.now() + 860 + DOOR_SNAP_COOLDOWN_MS;
+    autoSettleTo(DOOR_SNAP_POINTS[targetIndex]!, {
+      duration: 0.86,
+      ease: "power3.inOut",
+      markShowroomSettled: true
+    });
+  };
+
+  requestDoorSelect = (index: number) => {
+    if (!trigger || index < 0 || index >= DOOR_SNAP_POINTS.length) return;
+
+    if (!hasAutoSettledIntoShowroom && trigger.progress < TURNTABLE_START) {
+      hasAutoSettledIntoShowroom = true;
+    }
+
+    doorSnapCooldownUntil = performance.now() + 780 + DOOR_SNAP_COOLDOWN_MS;
+    autoSettleTo(DOOR_SNAP_POINTS[index]!, {
+      duration: 0.78,
+      ease: "power3.inOut",
+      markShowroomSettled: true
+    });
+  };
+
   const shouldAutoSlideHorizontal = (direction: number) =>
     Boolean(
       trigger &&
@@ -607,6 +663,31 @@ onMounted(() => {
       duration: 2.6,
       ease: "sine.inOut",
       markShowroomSettled: false
+    });
+
+    return true;
+  };
+
+  const shouldReverseSlideHorizontal = (direction: number) =>
+    Boolean(
+      trigger &&
+        direction < 0 &&
+        hasAutoSettledIntoShowroom &&
+        trigger.progress > TURNTABLE_END + DOOR_SNAP_PAD &&
+        trigger.progress <= 1
+    );
+
+  const reverseSlideHorizontal = (event?: Event) => {
+    if (!trigger || !shouldReverseSlideHorizontal(-1)) return false;
+
+    if (event) {
+      consumeScrollEvent(event);
+    }
+
+    horizontalSlideCooldownUntil = performance.now() + 2600 + HORIZONTAL_SLIDE_COOLDOWN_MS;
+    autoSettleTo(TURNTABLE_END, {
+      duration: 2.6,
+      ease: "sine.inOut"
     });
 
     return true;
@@ -667,6 +748,10 @@ onMounted(() => {
       return;
     }
 
+    if (event.deltaY < 0 && reverseSlideHorizontal(event)) {
+      return;
+    }
+
     if (shouldTakeOverSettle(event.deltaY)) {
       takeOverSettle(event);
     }
@@ -705,6 +790,10 @@ onMounted(() => {
     }
 
     if (direction > 0 && autoSlideHorizontal(event)) {
+      return;
+    }
+
+    if (direction < 0 && reverseSlideHorizontal(event)) {
       return;
     }
 
@@ -749,6 +838,10 @@ onMounted(() => {
       return;
     }
 
+    if (direction < 0 && reverseSlideHorizontal(event)) {
+      return;
+    }
+
     if (shouldTakeOverSettle(direction)) {
       takeOverSettle(event);
     }
@@ -758,7 +851,7 @@ onMounted(() => {
     trigger: hero,
     start: "top top",
     end: () => `+=${Math.round(window.innerHeight * 8.5)}`,
-    scrub: 0.55,
+    scrub: true,
     pin: true,
     pinSpacing: true,
     anticipatePin: 1,
@@ -830,6 +923,8 @@ onMounted(() => {
     window.removeEventListener("touchmove", onSettleTouchMove, { capture: true });
     window.removeEventListener("keydown", onSettleKeydown, { capture: true });
     window.removeEventListener("pageshow", onPageShow);
+    requestDoorStep = undefined;
+    requestDoorSelect = undefined;
     processedFrames.clear();
     pendingFrames.clear();
   };
@@ -849,7 +944,11 @@ onBeforeUnmount(() => {
   >
     <!-- SHOWROOM (her zaman arkada, opacity sabit) -->
     <div class="entrance-door__showroom" aria-hidden="false">
-      <ShowroomTurntable :progress="turntableProgress" />
+      <ShowroomTurntable
+        :progress="turntableProgress"
+        @door-step="onDoorStep"
+        @door-select="onDoorSelect"
+      />
     </div>
 
     <div class="entrance-door__next-panel" aria-hidden="true" />
