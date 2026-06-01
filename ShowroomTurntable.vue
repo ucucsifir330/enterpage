@@ -249,10 +249,10 @@ const nameFitScale = computed(() =>
   `${clamp(8.9 / activeDoor.value.nameDisplay.lead.length, 0.82, 1)}`
 );
 const backdropStyle = computed(() => ({
-  "--backdrop-scale": "0.96",
-  "--backdrop-x": "0vw",
-  "--backdrop-y": "-4vh",
-  "--backdrop-opacity": "1"
+  "--backdrop-scale": `${activeDoor.value.visual.backdropScale}`,
+  "--backdrop-x": activeDoor.value.visual.backdropX,
+  "--backdrop-y": activeDoor.value.visual.backdropY,
+  "--backdrop-opacity": `calc(var(--showroom-backdrop-opacity, 1) * ${activeDoor.value.visual.backdropOpacity})`
 }));
 const doorNumber = computed(() => String(activeIndex.value + 1).padStart(2, "0"));
 const totalDoors = String(doors.length).padStart(2, "0");

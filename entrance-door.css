@@ -32,6 +32,10 @@
   --showroom-door-rise-y: 86px;
   --showroom-neighbor-rise-y: 82px;
   --showroom-page-x: 0%;
+  --hero-door-aspect-ratio: 472 / 577;
+  --hero-door-center-x: 52.8581%;
+  --hero-door-top: 38.2769%;
+  --hero-door-width: 18.4635%;
 
   position: relative;
   width: 100%;
@@ -157,6 +161,7 @@
   position: absolute;
   inset: 0;
   z-index: 1;
+  overflow: hidden;
   pointer-events: none;
   transform-origin: var(--zoom-origin-x) var(--zoom-origin-y);
   transform: scale(var(--zoom-scale));
@@ -164,42 +169,57 @@
   will-change: transform, opacity;
 }
 
+.entrance-door__artboard {
+  position: absolute;
+  left: var(--hero-artboard-left, 0px);
+  top: var(--hero-artboard-top, 0px);
+  width: var(--hero-artboard-width, 100%);
+  height: var(--hero-artboard-height, 100%);
+  pointer-events: none;
+}
+
+.entrance-door__hero-picture,
 .entrance-door__hero-image {
   position: absolute;
   inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: center top;
   user-select: none;
   pointer-events: none;
 }
 
-.entrance-door__hero-image--day {
+.entrance-door__hero-image {
+  object-fit: fill;
+}
+
+.entrance-door__hero-picture--day {
   opacity: 1;
   transition: opacity 720ms var(--ease-soft);
 }
 
-.entrance-door__hero-image--night {
+.entrance-door__hero-picture--night {
   opacity: 0;
   transition: opacity 720ms var(--ease-soft);
 }
 
-.app-shell--night .entrance-door__hero-image--day {
+.app-shell--night .entrance-door__hero-picture--day {
   opacity: 0;
 }
 
-.app-shell--night .entrance-door__hero-image--night {
+.app-shell--night .entrance-door__hero-picture--night {
   opacity: 1;
 }
 
 /* CANVAS STAGE — kapının yerleşeceği konum */
 .entrance-door__stage {
   position: absolute;
-  left: var(--door-left, 50%);
-  top: var(--door-top, 50%);
-  width: var(--door-width, 200px);
-  height: var(--door-height, 440px);
+  left: var(--hero-door-center-x);
+  top: var(--hero-door-top);
+  width: var(--hero-door-width);
+  height: auto;
+  aspect-ratio: var(--hero-door-aspect-ratio, 472 / 577);
+  transform: translateX(-50%);
   pointer-events: none;
   will-change: transform;
 }
@@ -319,6 +339,12 @@
    ────────────────────────────────────────────────────────────── */
 
 @media (max-width: 768px) {
+  .entrance-door {
+    --hero-door-center-x: 51.1181%;
+    --hero-door-top: 29.5457%;
+    --hero-door-width: 58.1250%;
+  }
+
   .entrance-door__heading {
     font-size: clamp(40px, 11vw, 68px);
   }
@@ -342,12 +368,34 @@
   }
 }
 
+@media (min-width: 769px) and (max-width: 1180px) and (orientation: landscape) {
+  .entrance-door {
+    --hero-door-center-x: 53.7335%;
+    --hero-door-top: 38.2871%;
+    --hero-door-width: 24.5242%;
+  }
+
+  .app-shell--night .entrance-door {
+    --hero-door-center-x: 53.7701%;
+    --hero-door-top: 37.4570%;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1180px) and (orientation: portrait) {
+  .entrance-door {
+    --hero-door-center-x: 50.7822%;
+    --hero-door-top: 35.5721%;
+    --hero-door-width: 43.5547%;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .entrance-door__cue i {
     animation: none;
   }
 
   .entrance-door__hero-image,
+  .entrance-door__hero-picture,
   .entrance-door__zoom-layer {
     transition: none !important;
   }

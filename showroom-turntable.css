@@ -153,7 +153,11 @@
   display: flex;
   width: max-content;
   white-space: nowrap;
+  transform: translate3d(12vw, 0, 0);
   will-change: transform;
+}
+
+.entrance-door--backdrop-running .showroom-turntable__backdrop-marquee {
   animation: showroom-backdrop-marquee 160s linear infinite;
 }
 
@@ -174,7 +178,7 @@
 
 @keyframes showroom-backdrop-marquee {
   from {
-    transform: translate3d(0, 0, 0);
+    transform: translate3d(12vw, 0, 0);
   }
   to {
     transform: translate3d(-50%, 0, 0);

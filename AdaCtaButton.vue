@@ -247,6 +247,10 @@ const resetHoverDirection = (event: PointerEvent) => {
   transition: transform 450ms cubic-bezier(0.165, 0.84, 0.44, 1);
 }
 
+.ada-cta-button:not(.ada-cta-button--icon-left) .ada-cta-button__icon {
+  width: clamp(18px, 1.12vw, 22px);
+}
+
 .ada-cta-button__rocket {
   display: block;
   width: 100%;

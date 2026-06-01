@@ -5,9 +5,8 @@
  * Yaklaşım:
  *  • Showroom HER ZAMAN arkada (z:0), opacity sabit.
  *  • Hero görseli + kapı frame'i ÜSTTE (z:1).
- *  • Her frame yüklenirken siyah pixel'leri alpha=0'a çeviriyoruz.
- *    Böylece kapı açılan kısımdan altındaki showroom doğal olarak görünüyor.
- *    Bu GERÇEK portal — yani kapı bir mask gibi davranıyor.
+ *  • Door frame render'ı üst katmanda akarak açılır.
+ *  • Showroom katmanı arkada kalır; zoom/fade geçişinde devreye girer.
  *
  * Timeline (master progress):
  *  0.00 → 0.50  PORTAL    : sadece kapı açılıyor, zoom YOK
@@ -26,27 +25,33 @@ import ShowroomTurntable from "./ShowroomTurntable.vue";
 // IMAGEKIT
 // ─────────────────────────────────────────────────────────────
 const IK_BASE = "https://ik.imagekit.io/kardoor";
-const FRAME_COUNT = 120;
+const FRAME_COUNT = 103;
+
+const withImageKitTransform = (url: string, quality = 84) =>
+  `${url}&tr=f-webp,q-${quality}`;
 
 const heroAssets = {
-  day: `${IK_BASE}/EvLight.png?tr=f-webp,q-82`,
-  night: `${IK_BASE}/EvDark.png?tr=f-webp,q-82`
+  day: {
+    master: withImageKitTransform(`${IK_BASE}/Ege%20Kardoor%20Home%20Mask/Ege%20Kardoor%20Home%20Mask/kardoor-hero-daylight-final-3840x2160.png?updatedAt=1780265736700`),
+    tabletLandscape: withImageKitTransform(`${IK_BASE}/Ege%20Kardoor%20Home%20Mask/Ege%20Kardoor%20Home%20Mask/kardoor-hero-daylight-tablet-landscape-2732x2048.png?updatedAt=1780265734510`),
+    tabletPortrait: withImageKitTransform(`${IK_BASE}/Ege%20Kardoor%20Home%20Mask/Ege%20Kardoor%20Home%20Mask/kardoor-hero-daylight-tablet-portrait-2048x2732.png?updatedAt=1780265734863`),
+    mobile: withImageKitTransform(`${IK_BASE}/Ege%20Kardoor%20Home%20Mask/Ege%20Kardoor%20Home%20Mask/kardoor-hero-daylight-mobile-1440x2560.png?updatedAt=1780265732301`)
+  },
+  night: {
+    master: withImageKitTransform(`${IK_BASE}/Ege%20Kardoor%20Home%20Mask/Ege%20Kardoor%20Home%20Mask/kardoor-hero-night-final-3840x2160.png?updatedAt=1780265734751`),
+    tabletLandscape: withImageKitTransform(`${IK_BASE}/Ege%20Kardoor%20Home%20Mask/Ege%20Kardoor%20Home%20Mask/kardoor-hero-night-tablet-landscape-2732x2048.png?updatedAt=1780265732355`),
+    tabletPortrait: withImageKitTransform(`${IK_BASE}/Ege%20Kardoor%20Home%20Mask/Ege%20Kardoor%20Home%20Mask/kardoor-hero-night-tablet-portrait-2048x2732.png?updatedAt=1780265734871`),
+    mobile: withImageKitTransform(`${IK_BASE}/Ege%20Kardoor%20Home%20Mask/Ege%20Kardoor%20Home%20Mask/kardoor-hero-night-mobile-1440x2560.png?updatedAt=1780265729829`)
+  }
 };
 
 const frameUrl = (n: number, width?: number) => {
   const transform = width ? `tr=w-${width},f-webp,q-78` : "tr=f-webp,q-80";
-  return `${IK_BASE}/lastdoorrender/Image${String(n).padStart(2, "0")}.webp?${transform}`;
+  return `${IK_BASE}/newrenderwebp/${String(n).padStart(2, "0")}.webp?${transform}`;
 };
 
-const HERO_NATURAL = { width: 1672, height: 941 };
-const HERO_DOOR_RECT = { x: 676, y: 233, width: 332, height: 408 };
-const RENDER_DOOR_CROP_FULL = { x: 1051, y: 421, width: 474, height: 580 };
-const RENDER_DOOR_CROP_FALLBACK = { x: 1051, y: 421, width: 474, height: 580 };
-
-// Portal mask: siyaha yakın pixel'leri şeffaf yapma eşiği
-// 0 = sadece tam siyah, 30-40 = koyu griler dahil
-const PORTAL_BLACK_THRESHOLD = 8;
-const PORTAL_FEATHER = 10; // yumuşak geçiş bandı
+const RENDER_DOOR_CROP_FULL = { x: 1048, y: 416, width: 480, height: 588 };
+const RENDER_DOOR_CROP_FALLBACK = { x: 1048, y: 416, width: 480, height: 588 };
 
 // ─────────────────────────────────────────────────────────────
 // COPY (TR / EN)
@@ -81,6 +86,7 @@ const copy = computed(() =>
 const heroRef = ref<HTMLElement | null>(null);
 const heroImageRef = ref<HTMLImageElement | null>(null);
 const zoomLayerRef = ref<HTMLElement | null>(null);
+const artboardRef = ref<HTMLElement | null>(null);
 const stageRef = ref<HTMLElement | null>(null);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 
@@ -106,10 +112,11 @@ onMounted(() => {
   const hero = heroRef.value;
   const heroImage = heroImageRef.value;
   const zoomLayer = zoomLayerRef.value;
+  const artboard = artboardRef.value;
   const stage = stageRef.value;
   const canvas = canvasRef.value;
 
-  if (!hero || !heroImage || !zoomLayer || !stage || !canvas) return;
+  if (!hero || !heroImage || !zoomLayer || !artboard || !stage || !canvas) return;
 
   gsap.registerPlugin(ScrollTrigger);
 
@@ -133,12 +140,8 @@ onMounted(() => {
 
   // ───────────── FRAME LOADER + PORTAL PROCESSING ─────────────
   /**
-   * Her frame yüklendiğinde:
-   *  1. Offscreen canvas'a kapı crop'unu çiz.
-   *  2. Siyah pixel'leri alpha=0 yap (portal mask).
-   *  3. Sonucu HTMLCanvasElement olarak cache'le.
-   *
-   * Böylece kapının arkası şeffaf olur ve altındaki showroom görünür.
+   * Her frame yüklendiğinde kapı crop'unu offscreen canvas'a alıp
+   * yeşil render arka planını şeffaflıyoruz.
    */
   const processedFrames = new Map<number, HTMLCanvasElement>();
   const pendingFrames = new Map<number, Promise<HTMLCanvasElement>>();
@@ -163,7 +166,6 @@ onMounted(() => {
       0, 0, crop.width, crop.height
     );
 
-    // CORS sebebiyle getImageData başarısız olabilir, try-catch
     try {
       const imageData = offCtx.getImageData(0, 0, crop.width, crop.height);
       const pixels = imageData.data;
@@ -172,23 +174,16 @@ onMounted(() => {
         const r = pixels[i] ?? 0;
         const g = pixels[i + 1] ?? 0;
         const b = pixels[i + 2] ?? 0;
-        // En parlak kanal — siyahlık ölçüsü
-        const brightness = Math.max(r, g, b);
+        const isRenderGreen = g > 68 && g > r * 1.22 && g > b * 1.18 && r < 120 && b < 120;
 
-        if (brightness < PORTAL_BLACK_THRESHOLD) {
-          // Tam şeffaf
+        if (isRenderGreen) {
           pixels[i + 3] = 0;
-        } else if (brightness < PORTAL_BLACK_THRESHOLD + PORTAL_FEATHER) {
-          // Yumuşak geçiş (anti-aliasing kenarlar için)
-          const t = (brightness - PORTAL_BLACK_THRESHOLD) / PORTAL_FEATHER;
-          pixels[i + 3] = Math.round((pixels[i + 3] ?? 255) * t);
         }
       }
 
       offCtx.putImageData(imageData, 0, 0);
     } catch {
-      // CORS taint — fallback: işlemsiz canvas dön
-      // ImageKit CORS açık olduğu için bu normalde gerçekleşmez
+      // CORS taint olursa kapıyı yine göster, sadece yeşil key uygulanmaz.
     }
 
     return off;
@@ -242,7 +237,7 @@ onMounted(() => {
       activeFrames[activeFrames.length - 1]
     ].filter((v): v is number => typeof v === "number");
 
-    const queue = Array.from(new Set([...keyFrames, ...activeFrames]));
+    const queue = Array.from(new Set(keyFrames));
     let idx = 0;
     let warmTimer: number | null = null;
 
@@ -298,21 +293,47 @@ onMounted(() => {
   };
 
   // ───────────── DOOR ALIGNMENT ─────────────
+  const getHeroArtboardAspect = () => {
+    if (window.matchMedia("(max-width: 768px)").matches) return 1440 / 2560;
+    if (window.matchMedia("(min-width: 769px) and (max-width: 1180px) and (orientation: portrait)").matches) {
+      return 2048 / 2732;
+    }
+    if (window.matchMedia("(min-width: 769px) and (max-width: 1180px) and (orientation: landscape)").matches) {
+      return 2732 / 2048;
+    }
+    return 3840 / 2160;
+  };
+
+  const updateArtboardBox = () => {
+    const stageWidth = Math.max(1, hero.clientWidth);
+    const stageHeight = Math.max(1, hero.clientHeight);
+    const imageAspect = getHeroArtboardAspect();
+    const stageAspect = stageWidth / stageHeight;
+
+    const renderedWidth = stageAspect > imageAspect
+      ? stageWidth
+      : stageHeight * imageAspect;
+    const renderedHeight = stageAspect > imageAspect
+      ? stageWidth / imageAspect
+      : stageHeight;
+    const renderedLeft = (stageWidth - renderedWidth) / 2;
+    const renderedTop = (stageHeight - renderedHeight) / 2;
+
+    artboard.style.setProperty("--hero-artboard-left", `${renderedLeft}px`);
+    artboard.style.setProperty("--hero-artboard-top", `${renderedTop}px`);
+    artboard.style.setProperty("--hero-artboard-width", `${renderedWidth}px`);
+    artboard.style.setProperty("--hero-artboard-height", `${renderedHeight}px`);
+  };
+
   const updateStagePosition = () => {
+    updateArtboardBox();
+
     const bounds = hero.getBoundingClientRect();
-    const natW = heroImage.naturalWidth || HERO_NATURAL.width;
-    const natH = heroImage.naturalHeight || HERO_NATURAL.height;
-
-    const scale = Math.max(bounds.width / natW, bounds.height / natH);
-    const renderedW = natW * scale;
-
-    const offsetX = (bounds.width - renderedW) * 0.5;
-    const offsetY = 0;
-
-    const doorLeft = offsetX + HERO_DOOR_RECT.x * scale;
-    const doorTop = offsetY + HERO_DOOR_RECT.y * scale;
-    const doorW = HERO_DOOR_RECT.width * scale;
-    const doorH = HERO_DOOR_RECT.height * scale;
+    const stageBounds = stage.getBoundingClientRect();
+    const doorLeft = stageBounds.left - bounds.left;
+    const doorTop = stageBounds.top - bounds.top;
+    const doorW = stageBounds.width;
+    const doorH = stageBounds.height;
 
     const originX = doorLeft + doorW * 0.5;
     const originY = doorTop + doorH * 0.5;
@@ -330,10 +351,6 @@ onMounted(() => {
     showroomAnchorX = showroomStageX;
     showroomAnchorY = showroomStageY - showroomDoorH * 1.22 * 0.5;
 
-    stage.style.setProperty("--door-left", `${doorLeft}px`);
-    stage.style.setProperty("--door-top", `${doorTop}px`);
-    stage.style.setProperty("--door-width", `${doorW}px`);
-    stage.style.setProperty("--door-height", `${doorH}px`);
     hero.style.setProperty("--zoom-origin-x", `${originX}px`);
     hero.style.setProperty("--zoom-origin-y", `${originY}px`);
     zoomLayer.style.setProperty("--zoom-origin-x", `${originX}px`);
@@ -389,7 +406,8 @@ onMounted(() => {
     hero.style.setProperty("--showroom-ui-x", `${(1 - showroomUiReveal) * 76}px`);
     hero.style.setProperty("--showroom-backdrop-opacity", `${showroomAtmosphereReveal}`);
     hero.style.setProperty("--showroom-text-clip", `${100 - showroomAtmosphereReveal * 100}%`);
-    hero.style.setProperty("--showroom-text-x", `${(1 - showroomAtmosphereReveal) * -52}px`);
+    hero.style.setProperty("--showroom-text-x", `${(1 - showroomAtmosphereReveal) * 72}px`);
+    hero.classList.toggle("entrance-door--backdrop-running", showroomAtmosphereReveal > 0.015);
     hero.style.setProperty("--showroom-door-rise-y", `${showroomDoorRiseY}px`);
     hero.style.setProperty("--showroom-neighbor-rise-y", `${showroomNeighborRiseY}px`);
     hero.style.setProperty("--showroom-orbit-depth", `${showroomOrbitDepth}`);
@@ -897,8 +915,8 @@ onMounted(() => {
     })
     .catch(() => undefined);
 
+  heroImage.addEventListener("load", updateStagePosition);
   if (heroImage.complete) updateStagePosition();
-  else heroImage.addEventListener("load", updateStagePosition, { once: true });
 
   window.addEventListener("resize", onResize);
   window.addEventListener("wheel", onSettleWheel, { capture: true, passive: false });
@@ -923,6 +941,7 @@ onMounted(() => {
     window.removeEventListener("touchmove", onSettleTouchMove, { capture: true });
     window.removeEventListener("keydown", onSettleKeydown, { capture: true });
     window.removeEventListener("pageshow", onPageShow);
+    heroImage.removeEventListener("load", updateStagePosition);
     requestDoorStep = undefined;
     requestDoorSelect = undefined;
     processedFrames.clear();
@@ -955,31 +974,43 @@ onBeforeUnmount(() => {
 
     <!-- HERO + FRAME (üstte, zoom ile kaybolur) -->
     <div ref="zoomLayerRef" class="entrance-door__zoom-layer">
-      <img
-        ref="heroImageRef"
-        :src="heroAssets.day"
-        :alt="copy.imageAlt"
-        class="entrance-door__hero-image entrance-door__hero-image--day"
-        decoding="async"
-        loading="eager"
-        fetchpriority="high"
-        draggable="false"
-        crossorigin="anonymous"
-      >
-      <img
-        :src="heroAssets.night"
-        alt=""
-        class="entrance-door__hero-image entrance-door__hero-image--night"
-        aria-hidden="true"
-        decoding="async"
-        loading="eager"
-        draggable="false"
-        crossorigin="anonymous"
-      >
+      <div ref="artboardRef" class="entrance-door__artboard">
+        <picture class="entrance-door__hero-picture entrance-door__hero-picture--day">
+          <source :srcset="heroAssets.day.mobile" media="(max-width: 767px)">
+          <source :srcset="heroAssets.day.tabletPortrait" media="(min-width: 768px) and (max-width: 1180px) and (orientation: portrait)">
+          <source :srcset="heroAssets.day.tabletLandscape" media="(min-width: 768px) and (max-width: 1180px) and (orientation: landscape)">
+          <img
+            ref="heroImageRef"
+            :src="heroAssets.day.master"
+            :alt="copy.imageAlt"
+            class="entrance-door__hero-image"
+            decoding="async"
+            loading="eager"
+            fetchpriority="high"
+            draggable="false"
+            crossorigin="anonymous"
+          >
+        </picture>
 
-      <!-- Canvas: kapı açılış sekansı (siyah alanlar şeffaf) -->
-      <div ref="stageRef" class="entrance-door__stage" aria-hidden="true">
-        <canvas ref="canvasRef" class="entrance-door__canvas" />
+        <picture class="entrance-door__hero-picture entrance-door__hero-picture--night" aria-hidden="true">
+          <source :srcset="heroAssets.night.mobile" media="(max-width: 767px)">
+          <source :srcset="heroAssets.night.tabletPortrait" media="(min-width: 768px) and (max-width: 1180px) and (orientation: portrait)">
+          <source :srcset="heroAssets.night.tabletLandscape" media="(min-width: 768px) and (max-width: 1180px) and (orientation: landscape)">
+          <img
+            :src="heroAssets.night.master"
+            alt=""
+            class="entrance-door__hero-image"
+            decoding="async"
+            loading="eager"
+            draggable="false"
+            crossorigin="anonymous"
+          >
+        </picture>
+
+        <!-- Canvas: kapı açılış sekansı (siyah alanlar şeffaf) -->
+        <div ref="stageRef" class="entrance-door__stage" aria-hidden="true">
+          <canvas ref="canvasRef" class="entrance-door__canvas" />
+        </div>
       </div>
     </div>
 
