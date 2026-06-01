@@ -138,9 +138,12 @@ const resetHoverDirection = (event: PointerEvent) => {
   --ada-cta-fill-surface: #14151d;
 
   position: relative;
-  width: clamp(172px, 9.8vw, 196px);
+  width: max-content;
+  min-width: clamp(168px, 9.8vw, 196px);
+  max-width: 100%;
   height: clamp(48px, 2.92vw, 56px);
   display: inline-flex;
+  flex: 0 1 auto;
   align-items: center;
   justify-content: center;
   gap: clamp(14px, 1.35vw, 22px);
@@ -157,6 +160,7 @@ const resetHoverDirection = (event: PointerEvent) => {
   letter-spacing: 0;
   text-decoration: none;
   white-space: nowrap;
+  min-inline-size: 0;
   transition:
     background-color 450ms cubic-bezier(0.165, 0.84, 0.44, 1),
     border-color 450ms cubic-bezier(0.165, 0.84, 0.44, 1),
@@ -285,8 +289,11 @@ const resetHoverDirection = (event: PointerEvent) => {
 
 @media (max-width: 720px) {
   .ada-cta-button {
-    width: min(100%, 340px);
+    width: auto;
     min-width: 0;
+    height: clamp(40px, 11.6vw, 46px);
+    padding: 0 clamp(14px, 4.5vw, 17px);
+    font-size: clamp(11px, 3.35vw, 13px);
   }
 }
 </style>

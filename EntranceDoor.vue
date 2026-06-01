@@ -19,13 +19,15 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useKardoorLocale } from "~/composables/useKardoorLocale";
+import AdaCtaButton from "./AdaCtaButton.vue";
 import ShowroomTurntable from "./ShowroomTurntable.vue";
 
 // ─────────────────────────────────────────────────────────────
 // IMAGEKIT
 // ─────────────────────────────────────────────────────────────
 const IK_BASE = "https://ik.imagekit.io/kardoor";
-const FRAME_COUNT = 103;
+const DOOR_SPRITE_METADATA_PATH = "/kardoor-door-sprite.json";
+const DOOR_FALLBACK_FRAME_COUNT = 103;
 
 const withImageKitTransform = (url: string, quality = 84) =>
   `${url}&tr=f-webp,q-${quality}`;
@@ -45,14 +47,6 @@ const heroAssets = {
   }
 };
 
-const frameUrl = (n: number, width?: number) => {
-  const transform = width ? `tr=w-${width},f-webp,q-78` : "tr=f-webp,q-80";
-  return `${IK_BASE}/newrenderwebp/${String(n).padStart(2, "0")}.webp?${transform}`;
-};
-
-const RENDER_DOOR_CROP_FULL = { x: 1048, y: 416, width: 480, height: 588 };
-const RENDER_DOOR_CROP_FALLBACK = { x: 1048, y: 416, width: 480, height: 588 };
-
 // ─────────────────────────────────────────────────────────────
 // COPY (TR / EN)
 // ─────────────────────────────────────────────────────────────
@@ -66,7 +60,9 @@ const copy = computed(() =>
         line1: "Hayallerinize",
         accent: "Açılan",
         line2: "Kapı",
-        subtitle: "Güven, kapının ardında yaşar.",
+        subtitleLead: "Güven kapının ardında",
+        subtitleAccent: "yaşar.",
+        ctaLabel: "Koleksiyonları Keşfet",
         scrollCue: "Kaydır"
       }
     : {
@@ -75,7 +71,9 @@ const copy = computed(() =>
         line1: "The Door",
         accent: "to Your",
         line2: "Dreams",
-        subtitle: "Confidence lives behind the door.",
+        subtitleLead: "Confidence lives behind the door",
+        subtitleAccent: "",
+        ctaLabel: "Explore Collections",
         scrollCue: "Scroll"
       }
 );
@@ -123,141 +121,119 @@ onMounted(() => {
   const context = canvas.getContext("2d");
   if (!context) return;
 
+  const copyMask = hero.querySelector<HTMLElement>(".entrance-door__copy-mask");
+  const copyItems = copyMask
+    ? gsap.utils.toArray<HTMLElement>(".entrance-door__copy-reveal", copyMask)
+    : [];
+  let copyRevealTween: gsap.core.Tween | undefined;
+
+  const runCopyReveal = () => {
+    if (!copyMask || !copyItems.length) return;
+
+    copyRevealTween?.kill();
+
+    gsap.set(copyItems, {
+      opacity: 0,
+      y: (_index, el) => {
+        const maskBottom = copyMask.getBoundingClientRect().bottom;
+        const itemTop = (el as HTMLElement).getBoundingClientRect().top;
+        return Math.max(42, maskBottom - itemTop + 8);
+      }
+    });
+
+    copyRevealTween = gsap.to(copyItems, {
+      opacity: 1,
+      y: 0,
+      duration: 1.22,
+      ease: "expo.out",
+      stagger: 0.15,
+      delay: 0.12,
+      overwrite: true,
+      clearProps: "transform,opacity"
+    });
+  };
+
   let showroomOriginX = 0;
   let showroomOriginY = 0;
   let showroomAnchorX = 0;
   let showroomAnchorY = 0;
 
-  const isMobile = window.matchMedia("(max-width: 768px)").matches;
-  const frameStep = isMobile ? 2 : 1;
-  const frameLoadWidth = isMobile ? 768 : undefined;
-
-  const activeFrames: number[] = [];
-  for (let i = 1; i <= FRAME_COUNT; i += frameStep) activeFrames.push(i);
-  if (activeFrames[activeFrames.length - 1] !== FRAME_COUNT) {
-    activeFrames.push(FRAME_COUNT);
-  }
-
-  // ───────────── FRAME LOADER + PORTAL PROCESSING ─────────────
-  /**
-   * Her frame yüklendiğinde kapı crop'unu offscreen canvas'a alıp
-   * yeşil render arka planını şeffaflıyoruz.
-   */
-  const processedFrames = new Map<number, HTMLCanvasElement>();
-  const pendingFrames = new Map<number, Promise<HTMLCanvasElement>>();
-  let currentFrameNumber = -1;
-  let pendingFrameNumber = -1;
-
-  const processFrameForPortal = (img: HTMLImageElement): HTMLCanvasElement => {
-    const useFull =
-      img.naturalWidth >= RENDER_DOOR_CROP_FULL.x + RENDER_DOOR_CROP_FULL.width &&
-      img.naturalHeight >= RENDER_DOOR_CROP_FULL.y + RENDER_DOOR_CROP_FULL.height;
-    const crop = useFull ? RENDER_DOOR_CROP_FULL : RENDER_DOOR_CROP_FALLBACK;
-
-    const off = document.createElement("canvas");
-    off.width = crop.width;
-    off.height = crop.height;
-    const offCtx = off.getContext("2d");
-    if (!offCtx) return off;
-
-    offCtx.drawImage(
-      img,
-      crop.x, crop.y, crop.width, crop.height,
-      0, 0, crop.width, crop.height
-    );
-
-    try {
-      const imageData = offCtx.getImageData(0, 0, crop.width, crop.height);
-      const pixels = imageData.data;
-
-      for (let i = 0; i < pixels.length; i += 4) {
-        const r = pixels[i] ?? 0;
-        const g = pixels[i + 1] ?? 0;
-        const b = pixels[i + 2] ?? 0;
-        const isRenderGreen = g > 68 && g > r * 1.22 && g > b * 1.18 && r < 120 && b < 120;
-
-        if (isRenderGreen) {
-          pixels[i + 3] = 0;
-        }
-      }
-
-      offCtx.putImageData(imageData, 0, 0);
-    } catch {
-      // CORS taint olursa kapıyı yine göster, sadece yeşil key uygulanmaz.
-    }
-
-    return off;
+  type DoorSpriteFrame = {
+    frame: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
   };
 
-  const loadFrame = (n: number): Promise<HTMLCanvasElement> => {
-    const cached = processedFrames.get(n);
-    if (cached) return Promise.resolve(cached);
+  type DoorSpriteMetadata = {
+    sprite: string;
+    frameWidth: number;
+    frameHeight: number;
+    columns: number;
+    frames: DoorSpriteFrame[];
+  };
 
-    const pending = pendingFrames.get(n);
-    if (pending) return pending;
+  // ───────────── SPRITE LOADER ─────────────
+  let spriteImage: HTMLImageElement | undefined;
+  let spriteMetadata: DoorSpriteMetadata | undefined;
+  let currentFrameNumber = -1;
+  let pendingFrameNumber = -1;
+  let drawRaf = 0;
+  let queuedDraw:
+    | {
+        frameNumber: number;
+        frame: DoorSpriteFrame;
+      }
+    | undefined;
+  let canvasMetrics = {
+    w: 0,
+    h: 0,
+    dpr: 1,
+    cw: 0,
+    ch: 0
+  };
 
+  const loadImage = (src: string): Promise<HTMLImageElement> => {
     const img = new Image();
-    img.crossOrigin = "anonymous"; // getImageData için kritik
     img.decoding = "async";
-    img.src = frameUrl(n, frameLoadWidth);
+    img.src = src;
 
-    const promise = (img.decode
+    return (img.decode
       ? img.decode().catch(
           () =>
             new Promise<void>((resolve, reject) => {
               img.onload = () => resolve();
-              img.onerror = () => reject(new Error("frame load failed"));
+              img.onerror = () => reject(new Error(`sprite load failed: ${src}`));
             })
         )
       : new Promise<void>((resolve, reject) => {
           img.onload = () => resolve();
-          img.onerror = () => reject(new Error("frame load failed"));
+          img.onerror = () => reject(new Error(`sprite load failed: ${src}`));
         })
-    )
-      .then(() => {
-        const processed = processFrameForPortal(img);
-        processedFrames.set(n, processed);
-        return processed;
-      })
-      .finally(() => {
-        pendingFrames.delete(n);
-      });
-
-    pendingFrames.set(n, promise);
-    return promise;
+    ).then(() => img);
   };
 
-  // Önce key frame'ler, sonra hepsi
-  const warmCache = () => {
-    const keyFrames = [
-      activeFrames[0],
-      activeFrames[Math.floor(activeFrames.length * 0.25)],
-      activeFrames[Math.floor(activeFrames.length * 0.5)],
-      activeFrames[Math.floor(activeFrames.length * 0.75)],
-      activeFrames[activeFrames.length - 1]
-    ].filter((v): v is number => typeof v === "number");
-
-    const queue = Array.from(new Set(keyFrames));
-    let idx = 0;
-    let warmTimer: number | null = null;
-
-    const tick = () => {
-      if (idx >= queue.length) {
-        warmTimer = null;
-        return;
+  const loadDoorSprite = async () => {
+    const metadata = await fetch(DOOR_SPRITE_METADATA_PATH).then((response) => {
+      if (!response.ok) {
+        throw new Error(`door sprite metadata failed: ${response.status}`);
       }
-      loadFrame(queue[idx++]!).catch(() => undefined);
-      warmTimer = window.setTimeout(tick, 45);
-    };
 
-    tick();
-    return () => {
-      if (warmTimer) window.clearTimeout(warmTimer);
-    };
+      return response.json() as Promise<DoorSpriteMetadata>;
+    });
+
+    const image = await loadImage(metadata.sprite);
+    spriteMetadata = metadata;
+    spriteImage = image;
+
+    const frameNumber = pendingFrameNumber > 0 ? pendingFrameNumber : metadata.frames[0]?.frame ?? 1;
+    const frame = getSpriteFrame(frameNumber);
+    if (frame) drawFrame(frameNumber, frame);
   };
 
   // ───────────── CANVAS DRAW ─────────────
-  const drawFrame = (processed: HTMLCanvasElement) => {
+  const syncCanvasMetrics = () => {
     const w = Math.max(1, Math.round(stage.clientWidth));
     const h = Math.max(1, Math.round(stage.clientHeight));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -267,29 +243,60 @@ onMounted(() => {
     if (canvas.width !== cw) canvas.width = cw;
     if (canvas.height !== ch) canvas.height = ch;
 
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    context.clearRect(0, 0, w, h);
-    context.drawImage(processed, 0, 0, w, h);
+    canvasMetrics = { w, h, dpr, cw, ch };
   };
 
-  const requestFrame = (n: number) => {
-    if (currentFrameNumber === n) return;
+  const drawFrameNow = (frame: DoorSpriteFrame) => {
+    if (!spriteImage) return;
 
-    const cached = processedFrames.get(n);
-    if (cached) {
-      currentFrameNumber = n;
-      drawFrame(cached);
-      return;
+    if (!canvasMetrics.w || !canvasMetrics.h) {
+      syncCanvasMetrics();
     }
 
-    pendingFrameNumber = n;
-    loadFrame(n)
-      .then((processed) => {
-        if (pendingFrameNumber !== n) return;
-        currentFrameNumber = n;
-        drawFrame(processed);
-      })
-      .catch(() => undefined);
+    const { w, h, dpr } = canvasMetrics;
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, w, h);
+    context.drawImage(
+      spriteImage,
+      frame.x,
+      frame.y,
+      frame.width,
+      frame.height,
+      0,
+      0,
+      w,
+      h
+    );
+  };
+
+  const drawFrame = (frameNumber: number, frame: DoorSpriteFrame) => {
+    queuedDraw = { frameNumber, frame };
+    currentFrameNumber = frameNumber;
+
+    if (drawRaf) return;
+
+    drawRaf = window.requestAnimationFrame(() => {
+      drawRaf = 0;
+      if (!queuedDraw) return;
+
+      const next = queuedDraw;
+      queuedDraw = undefined;
+      drawFrameNow(next.frame);
+    });
+  };
+
+  const getSpriteFrame = (frameNumber: number) => {
+    if (!spriteMetadata?.frames.length) return undefined;
+    const index = Math.min(spriteMetadata.frames.length - 1, Math.max(0, frameNumber - 1));
+    return spriteMetadata.frames[index];
+  };
+
+  const requestFrame = (frameNumber: number) => {
+    if (currentFrameNumber === frameNumber) return;
+
+    pendingFrameNumber = frameNumber;
+    const frame = getSpriteFrame(frameNumber);
+    if (frame) drawFrame(frameNumber, frame);
   };
 
   // ───────────── DOOR ALIGNMENT ─────────────
@@ -356,8 +363,9 @@ onMounted(() => {
     zoomLayer.style.setProperty("--zoom-origin-x", `${originX}px`);
     zoomLayer.style.setProperty("--zoom-origin-y", `${originY}px`);
 
-    const cur = processedFrames.get(currentFrameNumber);
-    if (cur) drawFrame(cur);
+    syncCanvasMetrics();
+    const cur = getSpriteFrame(currentFrameNumber);
+    if (cur) drawFrame(currentFrameNumber, cur);
   };
 
   // ───────────── MASTER PROGRESS ─────────────
@@ -375,11 +383,10 @@ onMounted(() => {
     const p = clamp01(raw);
 
     const seqP = clamp01(p / SEQ_END);
-    const frameIdx = Math.min(
-      activeFrames.length - 1,
-      Math.floor(seqP * activeFrames.length)
-    );
-    requestFrame(activeFrames[frameIdx] ?? 1);
+    const doorwayReveal = easeInOut(clamp01((seqP - 0.08) / 0.72));
+    const frameCount = spriteMetadata?.frames.length ?? DOOR_FALLBACK_FRAME_COUNT;
+    const frameNumber = Math.min(frameCount, Math.max(1, Math.floor(seqP * frameCount) + 1));
+    requestFrame(frameNumber);
 
     const settleP = clamp01((p - FIRST_DOOR_SETTLE_START) / (TURNTABLE_START - FIRST_DOOR_SETTLE_START));
     const zoomP = easeInOut(clamp01((p - HOLD_END) / (TURNTABLE_START - HOLD_END)));
@@ -398,6 +405,8 @@ onMounted(() => {
     const showroomNeighborRiseY = (1 - showroomOrbitDepth) * 82;
 
     zoomLayer.style.setProperty("--zoom-scale", `${zoomScale}`);
+    zoomLayer.style.setProperty("--doorway-reveal", `${doorwayReveal}`);
+    zoomLayer.style.setProperty("--doorway-reveal-clip", `${(1 - doorwayReveal) * 100}%`);
     hero.style.setProperty("--showroom-scale", `${showroomScale}`);
     hero.style.setProperty("--showroom-align-x", `${showroomAlignX}px`);
     hero.style.setProperty("--showroom-align-y", `${showroomAlignY}px`);
@@ -905,18 +914,18 @@ onMounted(() => {
     ScrollTrigger.refresh();
   };
 
-  const stopWarm = warmCache();
-
-  loadFrame(1)
-    .then((processed) => {
-      currentFrameNumber = 1;
+  loadDoorSprite()
+    .then(() => {
       updateStagePosition();
-      drawFrame(processed);
+      requestFrame(1);
     })
-    .catch(() => undefined);
+    .catch((error) => {
+      console.error("[EntranceDoor] Door sprite could not be loaded.", error);
+    });
 
   heroImage.addEventListener("load", updateStagePosition);
   if (heroImage.complete) updateStagePosition();
+  requestAnimationFrame(runCopyReveal);
 
   window.addEventListener("resize", onResize);
   window.addEventListener("wheel", onSettleWheel, { capture: true, passive: false });
@@ -931,10 +940,10 @@ onMounted(() => {
   window.addEventListener("pageshow", onPageShow);
 
   teardown = () => {
+    copyRevealTween?.kill();
     settleTween?.kill();
     unlockInput?.();
     trigger?.kill(true);
-    stopWarm();
     window.removeEventListener("resize", onResize);
     window.removeEventListener("wheel", onSettleWheel, { capture: true });
     window.removeEventListener("touchstart", onSettleTouchStart, { capture: true });
@@ -944,8 +953,12 @@ onMounted(() => {
     heroImage.removeEventListener("load", updateStagePosition);
     requestDoorStep = undefined;
     requestDoorSelect = undefined;
-    processedFrames.clear();
-    pendingFrames.clear();
+    spriteImage = undefined;
+    spriteMetadata = undefined;
+    if (drawRaf) {
+      window.cancelAnimationFrame(drawRaf);
+      drawRaf = 0;
+    }
   };
 });
 
@@ -1007,6 +1020,13 @@ onBeforeUnmount(() => {
           >
         </picture>
 
+        <div class="entrance-door__doorway-reveal" aria-hidden="true">
+          <ShowroomTurntable
+            class="entrance-door__doorway-interior"
+            :progress="turntableProgress"
+          />
+        </div>
+
         <!-- Canvas: kapı açılış sekansı (siyah alanlar şeffaf) -->
         <div ref="stageRef" class="entrance-door__stage" aria-hidden="true">
           <canvas ref="canvasRef" class="entrance-door__canvas" />
@@ -1015,14 +1035,37 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- HERO COPY -->
-    <div class="entrance-door__copy">
-      <h1 class="entrance-door__heading">
-        <span>{{ copy.line1 }}</span>
-        <span>
-          <em>{{ copy.accent }}</em> {{ copy.line2 }}
-        </span>
-      </h1>
-      <p class="entrance-door__subtitle">{{ copy.subtitle }}</p>
+    <div class="entrance-door__copy-mask">
+      <div class="entrance-door__copy">
+        <div class="entrance-door__copy-stack">
+          <h1 class="entrance-door__heading">
+            <span class="entrance-door__heading-line entrance-door__copy-reveal">
+              <span>{{ copy.line1 }}</span>
+            </span>
+            <span class="entrance-door__heading-line entrance-door__heading-line--accent entrance-door__copy-reveal">
+              <span>
+                <em>{{ copy.accent }}</em> {{ copy.line2 }}
+              </span>
+            </span>
+          </h1>
+          <p class="entrance-door__subtitle entrance-door__copy-reveal">
+            <span class="entrance-door__subtitle-line">
+              <span>
+                {{ copy.subtitleLead }}{{ copy.subtitleAccent ? " " : "" }}<em v-if="copy.subtitleAccent">{{ copy.subtitleAccent }}</em>
+              </span>
+            </span>
+          </p>
+          <div class="entrance-door__cta-row entrance-door__copy-reveal" aria-label="Hero aksiyonları">
+            <AdaCtaButton :label="copy.ctaLabel" href="#" variant="filled" icon-position="none" />
+            <a class="entrance-door__cta-arrow" href="#" :aria-label="copy.ctaLabel">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12H19" />
+                <path d="M14 7L19 12L14 17" />
+              </svg>
+            </a>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="entrance-door__cue" aria-hidden="true">

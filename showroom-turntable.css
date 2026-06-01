@@ -251,14 +251,26 @@
       var(--slot-non-active, 0) * var(--showroom-orbit-depth, 1)
     )
   );
-  filter: blur(var(--slot-blur, 0px));
   /* Scrub zaten frame-by-frame smooth — transform'a CSS easing koymak
      scroll velocity ile fight eder ve laggy hisse yol açar.
-     Sadece filter/opacity'de hafif yumuşatma bırakıyoruz (loading/fade için). */
-  transition:
-    opacity 180ms linear,
-    filter 320ms var(--ease-soft);
-  will-change: transform, opacity, filter;
+     Hareketli buyuk gorsellerde blur/drop-shadow paint maliyetini artirir. */
+  transition: opacity 180ms linear;
+  will-change: transform, opacity;
+}
+
+.showroom-turntable__slot::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5%;
+  width: 92%;
+  height: 18%;
+  border-radius: 999px;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.34), transparent 68%);
+  opacity: calc(var(--slot-opacity, 1) * 0.74);
+  transform: translate3d(-50%, 0, 0) scaleX(var(--slot-scale, 1));
+  z-index: -1;
+  pointer-events: none;
 }
 
 .showroom-turntable__door-image {
@@ -266,7 +278,6 @@
   height: 100%;
   object-fit: fill;
   object-position: center bottom;
-  filter: drop-shadow(var(--st-door-shadow));
   user-select: none;
   pointer-events: none;
 }
